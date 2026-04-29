@@ -80,13 +80,67 @@ def extract_imei(raw: bytes) -> Optional[str]:
 
 def split_frames(buf: bytes) -> tuple[list[bytes], bytes]:
     """
-    按换行符分帧（每条 JSON 以 '\\n' 结尾）。
+    分帧策略（按优先级）：
+    1. 有 \\n 分隔符 → 按行切割（标准模式）
+    2. 无 \\n → 用括号计数法提取完整 JSON 对象（设备直发模式）
     返回 (已完整帧列表, 剩余不完整数据)。
     """
+    buf = buf.replace(b"\r\n", b"\n")
+
+    if b"\n" in buf:
+        frames: list[bytes] = []
+        while b"\n" in buf:
+            frame, buf = buf.split(b"\n", 1)
+            frame = frame.strip()
+            if frame:
+                frames.append(frame)
+        return frames, buf
+
+    # 无换行符：用括号计数逐个提取 JSON 对象
+    return _extract_json_objects(buf)
+
+
+def _extract_json_objects(buf: bytes) -> tuple[list[bytes], bytes]:
+    """从连续字节流中提取完整 JSON 对象（无任何分隔符时使用）。"""
     frames: list[bytes] = []
-    while b"\n" in buf:
-        frame, buf = buf.split(b"\n", 1)
-        frame = frame.strip()
+    i = 0
+    n = len(buf)
+    while i < n:
+        # 跳过非 JSON 字符（空格、逗号等）
+        while i < n and buf[i:i+1] not in (b"{", b"["):
+            i += 1
+        if i >= n:
+            break
+        open_char = buf[i:i+1]
+        close_char = b"}" if open_char == b"{" else b"]"
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for j in range(i, n):
+            c = buf[j:j+1]
+            if escape:
+                escape = False
+                continue
+            if c == b"\\":
+                escape = True
+                continue
+            if c == b'"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == open_char:
+                depth += 1
+            elif c == close_char:
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            break  # 不完整，等待更多数据
+        frame = buf[i:end+1].strip()
         if frame:
             frames.append(frame)
-    return frames, buf
+        i = end + 1
+    return frames, buf[i:]

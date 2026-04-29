@@ -28,6 +28,12 @@ class DeviceState:
     recent_points: deque = field(default_factory=lambda: deque(maxlen=RECENT_POINTS_BUF))
     current_work_state: WorkState = WorkState.UNKNOWN
     active_zone_ids: set = field(default_factory=set)
+    # 轨迹分段追踪
+    current_segment_id: Optional[int] = None
+    last_point_at: Optional[datetime] = None
+    # 作业状态机：当前驻留区的进入时刻 (用于 dwell 计算)
+    zone_entry_at: Optional[datetime] = None
+    zone_entry_id: Optional[int] = None   # 正在计时驻留的 zone_id
 
 
 class DeviceRegistry:
@@ -94,6 +100,26 @@ class DeviceRegistry:
         state = self._devices.get(device_id)
         if state:
             state.recent_points.append(point)
+
+    async def update_binding(
+        self,
+        device_id: int,
+        vehicle_id: Optional[int],
+        fleet_id: Optional[int],
+    ) -> bool:
+        """绑定/解绑后刷新内存状态，若设备不在线则返回 False。"""
+        state = self._devices.get(device_id)
+        if state is None:
+            return False
+        state.vehicle_id = vehicle_id
+        state.fleet_id = fleet_id
+        await logger.ainfo(
+            "device_binding_updated",
+            device_id=device_id,
+            vehicle_id=vehicle_id,
+            fleet_id=fleet_id,
+        )
+        return True
 
     async def send_command(self, device_id: int, cmd: bytes) -> bool:
         state = self._devices.get(device_id)

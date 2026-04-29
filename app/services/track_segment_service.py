@@ -1,0 +1,90 @@
+"""
+轨迹分段服务。
+
+每个有效 GPS 包到达时调用 get_or_advance_segment()，
+返回当前应使用的 segment_id（确保已在 DB 中建立记录）。
+
+分段规则：
+  - 首包：开启新段
+  - 上一包时刻与当前包时刻差 ≥ park_threshold_min 分钟：关闭旧段，开启新段
+  - 否则：续接当前段
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import asyncpg
+import structlog
+
+from app.core.device_registry import DeviceState
+from app.db.repos.track_segment_repo import TrackSegmentRepo
+
+logger = structlog.get_logger()
+
+_ts_repo = TrackSegmentRepo()
+
+
+async def get_or_advance_segment(
+    state: DeviceState,
+    lat: float,
+    lng: float,
+    recorded_at: datetime,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+    park_threshold_min: int,
+) -> int:
+    """
+    返回当前有效的 segment_id（int）。
+    副作用：更新 state.current_segment_id 和 state.last_point_at。
+    """
+    now = recorded_at
+
+    if state.current_segment_id is None:
+        # 服务重启后从 DB 恢复开放段
+        existing = await _ts_repo.find_open_by_device(conn, state.device_id)
+        if existing:
+            state.current_segment_id = existing.id
+            state.last_point_at = existing.started_at
+
+    need_new = False
+    if state.current_segment_id is None:
+        need_new = True
+    elif state.last_point_at is not None:
+        gap_min = (now - state.last_point_at).total_seconds() / 60.0
+        if gap_min >= park_threshold_min:
+            need_new = True
+
+    if need_new:
+        # 关闭旧段（如存在）
+        if state.current_segment_id is not None and state.last_point_at is not None:
+            await _ts_repo.close_segment(
+                conn,
+                segment_id=state.current_segment_id,
+                ended_at=state.last_point_at,
+                end_lat=lat,
+                end_lng=lng,
+            )
+            await logger.ainfo(
+                "track_segment_closed",
+                device_id=state.device_id,
+                segment_id=state.current_segment_id,
+            )
+
+        seg_id = await _ts_repo.open_segment(
+            conn,
+            device_id=state.device_id,
+            started_at=now,
+            start_lat=lat,
+            start_lng=lng,
+            vehicle_id=state.vehicle_id,
+        )
+        state.current_segment_id = seg_id
+        await logger.ainfo(
+            "track_segment_opened",
+            device_id=state.device_id,
+            segment_id=seg_id,
+        )
+    else:
+        await _ts_repo.increment_points(conn, state.current_segment_id)  # type: ignore[arg-type]
+
+    state.last_point_at = now
+    return state.current_segment_id  # type: ignore[return-value]

@@ -7,10 +7,16 @@ import structlog
 
 from app.core.device_registry import device_registry
 from app.db.pool import get_pool
+from app.db.queries.business_config import SELECT_BUSINESS_CONFIG_SQL
+from app.core.enums import ZoneType
+from app.db.repos.geo_zone_repo import GeoZoneRepo
 from app.tcp.handlers.heartbeat_handler import HeartbeatHandler
 from app.tcp.handlers.register_handler import RegisterHandler
 from app.tcp.handlers.time_weather_handler import TimeWeatherHandler
+from app.tcp.handlers.gps_handler import GpsHandler
+from app.tcp.handlers.full_state_handler import FullStateHandler
 from app.tcp.protocol import extract_imei, parse_frame, split_frames
+from app.models.tcp_packets import FullStatePacket
 
 logger = structlog.get_logger()
 
@@ -19,6 +25,45 @@ MAX_BUF = 64 * 1024  # 64 KB 防内存爆炸
 _register_handler = RegisterHandler(device_registry)
 _heartbeat_handler = HeartbeatHandler(device_registry)
 _time_weather_handler = TimeWeatherHandler()
+_full_state_handler = FullStateHandler(device_registry)
+_gps_handler: Optional[GpsHandler] = None
+_geo_zone_repo = GeoZoneRepo()
+
+
+async def _get_gps_handler() -> GpsHandler:
+    """懒加载：首次使用时从 DB 读取业务配置，之后复用同一实例。"""
+    global _gps_handler
+    if _gps_handler is not None:
+        return _gps_handler
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        cfg = await conn.fetchrow(SELECT_BUSINESS_CONFIG_SQL)
+        # 判断是否存在限行围栏
+        all_zones = await _geo_zone_repo.find_all_enabled(conn)
+        has_restricted = any(z.zone_type == ZoneType.RESTRICTED for z in all_zones)
+
+    if cfg:
+        _gps_handler = GpsHandler(
+            registry=device_registry,
+            global_speed_limit=int(cfg["global_speed_limit"]),
+            park_threshold_min=int(cfg["park_threshold_min"]),
+            loading_dwell_min=int(cfg["loading_dwell_min"]),
+            unloading_dwell_min=int(cfg["unloading_dwell_min"]),
+            alert_cooldown_s=int(cfg["alert_cooldown_s"]),
+            has_restricted_zones=has_restricted,
+        )
+    else:
+        _gps_handler = GpsHandler(registry=device_registry, has_restricted_zones=has_restricted)
+
+    await logger.ainfo("gps_handler_initialized", has_restricted=has_restricted)
+    return _gps_handler
+
+
+def invalidate_gps_handler() -> None:
+    """围栏或业务配置变更后调用，下次 GPS 包时重新加载配置。"""
+    global _gps_handler
+    _gps_handler = None
 
 
 class ConnectionHandler:
@@ -54,6 +99,13 @@ class ConnectionHandler:
                     await logger.awarning("tcp_buf_overflow", peer=self._peer)
                     break
 
+                await logger.adebug(
+                    "tcp_chunk_recv",
+                    peer=self._peer,
+                    length=len(chunk),
+                    preview=chunk[:200],
+                )
+
                 frames, buf = split_frames(buf)
                 for raw in frames:
                     await self._dispatch(raw)
@@ -66,6 +118,7 @@ class ConnectionHandler:
     async def _dispatch(self, raw: bytes) -> None:
         parsed = parse_frame(raw)
         if parsed is None:
+            await logger.adebug("frame_unparseable", peer=self._peer, raw=raw[:120])
             return
 
         # 心跳包
@@ -85,6 +138,8 @@ class ConnectionHandler:
         # JSON 对象
         if not isinstance(parsed, dict):
             return
+
+        await logger.adebug("frame_received", peer=self._peer, device_id=self._device_id, keys=list(parsed.keys()))
 
         msg_type = parsed.get("type", "")
 
@@ -138,14 +193,35 @@ class ConnectionHandler:
             )
         except (KeyError, ValueError, TypeError):
             return
-        await device_registry.push_point(self._device_id, packet)
-        # 阶段 6 会在此调用 LocationRepo.insert 和 AlertService
+
+        state = await device_registry.get(self._device_id)
+        if state is None:
+            return
+
+        handler = await _get_gps_handler()
+        try:
+            await handler.handle(state, packet)
+        except Exception as exc:
+            await logger.aerror("gps_handler_error", device_id=self._device_id, error=str(exc))
 
     async def _handle_full_state(self, obj: dict) -> None:
+        # 若设备尚未注册，从 imei 字段自动触发注册流程
         if self._device_id is None:
+            imei = obj.get("imei") or obj.get("deviceId")
+            if imei:
+                await logger.ainfo("auto_register_from_full_state", imei=imei, peer=self._peer)
+                await self._handle_register({"imei": imei}, str(imei).encode())
+            if self._device_id is None:
+                return
+
+        state = await device_registry.get(self._device_id)
+        if state is None:
             return
-        # 阶段 6 will handle firmware/ICCID updates here
-        pass
+
+        try:
+            await _full_state_handler.handle(state, FullStatePacket.model_validate(obj))
+        except Exception as exc:
+            await logger.aerror("full_state_handler_error", device_id=self._device_id, error=str(exc))
 
     async def _cleanup(self) -> None:
         if self._device_id is not None:

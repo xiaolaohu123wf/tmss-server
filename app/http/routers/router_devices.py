@@ -4,6 +4,7 @@ import asyncpg
 from fastapi import APIRouter, Depends
 
 from app.cache.session_repo import SessionData
+from app.core.device_registry import device_registry
 from app.core.exceptions import NotFoundError
 from app.db.deps import get_db_conn
 from app.db.repos.device_repo import DeviceRepo
@@ -59,6 +60,13 @@ async def bind_device(
         driver_id=body.driver_id,
         operator=body.operator or session.username,
     )
+    # 查询车辆所属车队，同步刷新在线设备的内存状态
+    fleet_row = await conn.fetchrow(
+        "SELECT fleet_id FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+        body.vehicle_id,
+    )
+    fleet_id = fleet_row["fleet_id"] if fleet_row else None
+    await device_registry.update_binding(device_id, body.vehicle_id, fleet_id)
     return ok({"bind_id": bind_id})
 
 
@@ -69,6 +77,8 @@ async def unbind_device(
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
     await _repo.unbind(conn, device_id)
+    # 同步清除在线设备的内存绑定状态
+    await device_registry.update_binding(device_id, None, None)
     return ok({"message": "已解绑"})
 
 

@@ -26,9 +26,9 @@
 阶段 3  认证与权限     ██████████  ✅ 完成    Session + 登录/登出 + 依赖注入
 阶段 4  HTTP 管理 API  ██████████  ✅ 完成    CRUD 接口 + 数据隔离
 阶段 5  TCP 服务基础   ██████████  ✅ 完成    设备接入 + 心跳 + 时间/天气
-阶段 6  业务逻辑核心   ░░░░░░░░░░  ⬜ 待开发  超速/围栏/状态机/指令下发
+阶段 6  业务逻辑核心   ██████████  ✅ 完成    超速/围栏/状态机/指令下发
 阶段 7  实时推送       ░░░░░░░░░░  ⬜ 待开发  EventBus + SSE 路由
-阶段 8  后台任务       ░░░░░░░░░░  ⬜ 待开发  心跳扫描 + 分区自动创建
+阶段 8  后台任务       ██████████  ✅ 完成    心跳扫描 + 分区自动创建（手动）
 阶段 9  前端基础       ░░░░░░░░░░  ⬜ 待开发  Vue 骨架 + 登录 + 管理页
 阶段 10 大屏           ░░░░░░░░░░  ⬜ 待开发  高德地图 + SSE + ECharts
 ```
@@ -211,7 +211,7 @@ pytest tests/repos/ -v    # 所有 Repo 测试通过（testcontainers 真实 DB�
 
 ---
 
-## 阶段 6：业务逻辑核心
+## 阶段 6：业务逻辑核心 ✅
 
 **目标**：GPS 数据流完整处理：超速 → 指令下发 → 事件写入；围栏进出、作业状态机、轨迹分段正常运行。
 
@@ -220,30 +220,30 @@ pytest tests/repos/ -v    # 所有 Repo 测试通过（testcontainers 真实 DB�
 ### 任务清单
 
 **坐标转换与围栏**
-- [ ] `app/services/geofence_service.py` — WGS-84 → GCJ-02 转换函数、点在多边形（射线法）、加载活跃围栏列表（从 DB 或内存缓存）
+- [x] `app/services/geofence_service.py` — WGS-84 → GCJ-02 转换函数、点在多边形（射线法）、加载活跃围栏列表（从 DB 或内存缓存）
 
 **告警逻辑**
-- [ ] `app/cache/debounce.py` — `try_fire_alert(redis, device_id, alert_type, cooldown_s)` → Redis SETNX
-- [ ] `app/services/alert_service.py` — `process_location(state, packet)` → 检查超速（区域优先/全局兜底）+ 越界 + 禁运时段，返回 `Command | None`
+- [x] `app/cache/debounce.py` — `try_fire_alert(redis, device_id, alert_type, cooldown_s)` → Redis SETNX
+- [x] `app/services/alert_service.py` — `process_location(state, packet)` → 检查超速（区域优先/全局兜底）+ 越界 + 禁运时段，返回 `Command | None`
 
 **作业状态机**
-- [ ] `app/services/work_state_service.py` — 状态机：`loading` / `unloading` / `transport_loaded` / `transport_empty` / `unknown`；驻留时长判定；`work_session` 开关
+- [x] `app/services/work_state_service.py` — 状态机：`loading` / `unloading` / `transport_loaded` / `transport_empty` / `unknown`；驻留时长判定；`work_session` 开关
 
 **轨迹分段**
-- [ ] `app/services/track_segment_service.py` — 停车/掉线超阈值（默认 10 min）切段逻辑；`track_segment` 开关写入
+- [x] `app/services/track_segment_service.py` — 停车/掉线超阈值（默认 10 min）切段逻辑；`track_segment` 开关写入
 
 **指令下发**
-- [ ] `app/services/command_service.py` — `send(device_id, cmd)` → `DeviceRegistry.send_command` + `command_log` 写入
+- [x] `app/services/command_service.py` — `send(device_id, cmd)` → `DeviceRegistry.send_command` + `command_log` 写入
 
 **GPS Handler 总装**
-- [ ] `app/tcp/handlers/gps_handler.py` — 完整流程（参考 `ARCHITECTURE.md §3.1` 时序图）：
+- [x] `app/tcp/handlers/gps_handler.py` — 完整流程（参考 `ARCHITECTURE.md §3.1` 时序图）：
   1. `DeviceRegistry.push_point`
   2. `LocationRepo.insert_batch`
   3. `AlertService.process_location` → 如有命令则下发
   4. `WorkStateService.update`
   5. `TrackSegmentService.update`
   6. `EventBus.publish("location:{fleet_id}", frame)`
-- [ ] `app/tcp/handlers/full_state_handler.py` — 处理低频全量包（更新 ICCID、固件、LBS 位置、电压等）
+- [x] `app/tcp/handlers/full_state_handler.py` — 处理低频全量包（更新 ICCID、固件、LBS 位置、电压等）
 
 ### 验收标准
 
@@ -281,18 +281,18 @@ pytest tests/tcp/test_gps_handler.py -v
 
 ---
 
-## 阶段 8：后台任务
+## 阶段 8：后台任务 ✅（手动）
 
 **目标**：设备离线自动检测；月度分区自动创建，无需手工 DDL。
 
 ### 任务清单
 
-- [ ] `app/tasks/heartbeat_scanner.py` — 每 10 秒扫描 `DeviceRegistry`，对 90 秒未心跳设备：
+- [x] `app/tasks/heartbeat_scanner.py` — 每 10 秒扫描 `DeviceRegistry`，对 90 秒未心跳设备：
   1. 调用 `DeviceRegistry.unregister`
   2. 写入 `event(event_type='device_offline')`
   3. `EventBus.publish("device_state", {...})`
-- [ ] `app/tasks/partition_creator.py` — 每月 25 日 00:00 为下个月创建 `location_point` 分区
-- [ ] 在 `app/main.py` 中通过 `task_registry.spawn` 启动以上两个任务
+- [x] `app/tasks/partition_creator.py` — 每月 25 日 00:00 为下个月创建 `location_point` 分区
+- [x] 在 `app/main.py` 中通过 `task_registry.spawn` 启动以上两个任务
 
 ### 验收标准
 
