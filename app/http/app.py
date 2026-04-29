@@ -3,8 +3,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
+import os
+
 import structlog
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.cache.pool import close_redis_pool, init_redis
 from app.config import settings
@@ -71,6 +75,7 @@ def create_app() -> FastAPI:
     from app.http.routers.router_events import router as router_events
     from app.http.routers.router_users import router as router_users
     from app.http.routers.router_admin import router as router_admin
+    from app.http.routers.router_stream import router as router_stream
 
     app.include_router(router_auth.router)
     app.include_router(router_vehicles)
@@ -79,6 +84,17 @@ def create_app() -> FastAPI:
     app.include_router(router_events)
     app.include_router(router_users)
     app.include_router(router_admin)
+    app.include_router(router_stream)
+
+    # 监控页面
+    _static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
+    _static_dir = os.path.normpath(_static_dir)
+    if os.path.isdir(_static_dir):
+        app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+        @app.get("/monitor", include_in_schema=False)
+        async def monitor_page() -> FileResponse:
+            return FileResponse(os.path.join(_static_dir, "monitor.html"))
 
     @app.get("/health")
     async def health() -> dict:

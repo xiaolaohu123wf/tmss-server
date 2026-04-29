@@ -83,6 +83,8 @@ class GpsHandler:
         redis: Redis,
         recorded_at: datetime,
     ) -> None:
+        fleet_id = state.fleet_id or 0
+
         # 1. 内存轨迹点
         await self._registry.push_point(state.device_id, packet)
 
@@ -148,6 +150,20 @@ class GpsHandler:
                 vehicle_id=state.vehicle_id,
                 event_id=event_id,
             )
+            # 告警事件推送到 SSE
+            alert_payload = {
+                "event": "alert",
+                "device_id": state.device_id,
+                "vehicle_id": state.vehicle_id,
+                "type": alert.event_type,
+                "speed": alert.speed,
+                "zone_id": alert.zone_id,
+                "lat": packet.lat,
+                "lng": packet.lng,
+                "ts": recorded_at.isoformat(),
+            }
+            await event_bus.publish(f"alert:{fleet_id}", alert_payload)
+            await event_bus.publish("alert:all", alert_payload)
 
         # 8. 作业状态机
         await work_state_service.update(
@@ -165,9 +181,8 @@ class GpsHandler:
             await self._registry.send_command(state.device_id, speed_msg)
 
         # 10. 实时推送（SSE）
-        fleet_id = state.fleet_id or 0
-        topic = f"location:{fleet_id}"
-        await event_bus.publish(topic, {
+        location_payload = {
+            "event": "location",
             "device_id": state.device_id,
             "vehicle_id": state.vehicle_id,
             "lat": packet.lat,
@@ -175,4 +190,6 @@ class GpsHandler:
             "speed": packet.speed,
             "altitude": packet.altitude,
             "ts": recorded_at.isoformat(),
-        })
+        }
+        await event_bus.publish(f"location:{fleet_id}", location_payload)
+        await event_bus.publish("location:all", location_payload)

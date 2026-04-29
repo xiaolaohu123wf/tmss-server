@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TMSS 实时监控</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #0f172a;
+      --panel:    #1e293b;
+      --border:   #334155;
+      --text:     #e2e8f0;
+      --muted:    #94a3b8;
+      --dim:      #475569;
+      --green:    #22c55e;
+      --yellow:   #eab308;
+      --red:      #ef4444;
+      --blue:     #38bdf8;
+      --orange:   #f97316;
+      --sidebar-w: 320px;
+      --header-h:  46px;
+      --mobnav-h:  52px;
+    }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+                 font-family: system-ui, -apple-system, sans-serif; font-size: 13px; }
+
+    /* ── Login overlay ───────────────────────────────────── */
+    #login-overlay {
+      position: fixed; inset: 0; background: rgba(15,23,42,.92);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    #login-overlay.hidden { display: none; }
+    .login-box {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 32px 28px; width: 320px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .login-box h2 { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; }
+    .login-box input {
+      width: 100%; padding: 9px 12px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 13px; outline: none;
+    }
+    .login-box input:focus { border-color: var(--blue); }
+    .login-box button {
+      padding: 10px; background: #2563eb; border: none; border-radius: 6px;
+      color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .login-box button:hover { background: #1d4ed8; }
+    #login-err { color: var(--red); font-size: 12px; text-align: center; min-height: 16px; }
+
+    /* ── Header ──────────────────────────────────────────── */
+    #header {
+      height: var(--header-h); background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 14px; gap: 10px; flex-shrink: 0;
+      position: relative; z-index: 10;
+    }
+    #conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex-shrink: 0; transition: background .3s; }
+    #conn-dot.ok  { background: var(--green); box-shadow: 0 0 6px #22c55e88; }
+    #conn-dot.err { background: var(--red); }
+    #conn-dot.warn{ background: var(--yellow); }
+    #header-title { font-size: 15px; font-weight: 700; color: var(--text); }
+    #header-info { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    #online-count { font-size: 12px; color: var(--muted); }
+    #user-info { font-size: 12px; color: var(--muted); }
+    #logout-btn {
+      font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 4px;
+      color: var(--muted); background: none; cursor: pointer;
+    }
+    #logout-btn:hover { color: var(--text); border-color: var(--muted); }
+
+    /* ── Main ────────────────────────────────────────────── */
+    #main {
+      height: calc(100vh - var(--header-h));
+      display: flex; overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* Device list */
+    #dev-section {
+      padding: 8px; border-bottom: 1px solid var(--border);
+      max-height: 220px; overflow-y: auto; flex-shrink: 0;
+    }
+    .section-title {
+      font-size: 10px; color: var(--dim); text-transform: uppercase;
+      letter-spacing: .06em; margin-bottom: 6px;
+    }
+    .dev-card {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 10px; margin-bottom: 5px; cursor: pointer; transition: border-color .2s;
+    }
+    .dev-card.online  { border-color: #166534; }
+    .dev-card.offline { border-color: #450a0a; opacity: .55; }
+    .dev-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot.online  { background: var(--green); box-shadow: 0 0 5px #22c55e88; }
+    .dot.offline { background: var(--red); }
+    .dev-name { font-weight: 600; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+    .dev-imei { font-size: 10px; color: var(--dim); margin-left: auto; white-space: nowrap; }
+    .dev-meta { display: flex; gap: 8px; font-size: 10px; color: var(--muted); }
+    .no-dev { color: var(--dim); font-size: 12px; padding: 12px; text-align: center; }
+
+    /* Log */
+    #log-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #log-header {
+      padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    #log-filters { display: flex; gap: 4px; }
+    .lf-btn {
+      font-size: 9px; font-weight: 700; padding: 2px 6px;
+      border: 1px solid var(--border); border-radius: 3px;
+      color: var(--dim); background: none; cursor: pointer; transition: all .15s;
+    }
+    .lf-btn:hover { color: var(--muted); border-color: var(--muted); }
+    .lf-btn.active { color: var(--text); background: var(--border); border-color: transparent; }
+    #clear-log-btn { font-size: 10px; color: var(--dim); background: none; border: none; cursor: pointer; }
+    #clear-log-btn:hover { color: var(--muted); }
+    #log-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .log-entry {
+      padding: 4px 10px; font-size: 11px; line-height: 1.5; border-bottom: 1px solid #1e293b;
+      display: flex; gap: 6px; align-items: flex-start;
+    }
+    .log-entry:hover { background: #1a2744; }
+    .log-tag {
+      font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+      flex-shrink: 0; margin-top: 2px; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .tag-loc  { background: #1e3a5f; color: #60a5fa; }
+    .tag-alert{ background: #3b1a1a; color: #f87171; }
+    .tag-conn { background: #14311f; color: #4ade80; }
+    .tag-disc { background: #2d1a0d; color: #fb923c; }
+    .log-body { color: var(--muted); flex: 1; word-break: break-all; }
+    .log-time { color: var(--dim); font-size: 10px; flex-shrink: 0; white-space: nowrap; }
+
+    /* ── Map ─────────────────────────────────────────────── */
+    #map-container { flex: 1; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    /* Map info box */
+    #map-info {
+      position: absolute; top: 10px; right: 10px; z-index: 400;
+      background: rgba(15,23,42,.88); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; font-size: 11px; color: var(--muted); min-width: 160px;
+      backdrop-filter: blur(4px);
+    }
+    #map-info b { color: var(--text); }
+
+    /* ── Mobile nav ──────────────────────────────────────── */
+    #mobile-nav {
+      display: none;
+      height: var(--mobnav-h); background: var(--panel); border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #mobile-nav .tabs { display: flex; height: 100%; }
+    #mobile-nav .tab-btn {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 3px; border: none; background: none;
+      color: var(--dim); cursor: pointer; font-size: 10px; transition: color .2s;
+    }
+    #mobile-nav .tab-btn.active { color: var(--blue); }
+    #mobile-nav .tab-btn svg { width: 20px; height: 20px; }
+
+    /* ── Responsive ──────────────────────────────────────── */
+    @media (max-width: 640px) {
+      body { display: flex; flex-direction: column; height: 100dvh; height: 100vh; }
+      #header { flex-shrink: 0; }
+      #main {
+        flex: 1; flex-direction: row; min-height: 0;
+        height: auto !important;
+      }
+      #mobile-nav { flex-shrink: 0; display: flex; }
+      #sidebar {
+        position: absolute; inset: var(--header-h) 0 var(--mobnav-h) 0;
+        width: 100% !important; border-right: none; z-index: 5;
+        display: none;
+      }
+      #map-container {
+        position: absolute; inset: var(--header-h) 0 var(--mobnav-h) 0;
+        display: none;
+      }
+      #main.tab-map  #map-container { display: block; }
+      #main.tab-log  #sidebar       { display: flex; }
+    }
+
+    /* Leaflet dark override */
+    .leaflet-container { background: #0f172a !important; }
+    .leaflet-popup-content-wrapper { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+    .leaflet-popup-tip { background: var(--panel); }
+    .leaflet-popup-close-button { color: var(--muted) !important; }
+    .device-popup { font-size: 12px; line-height: 1.8; }
+    .device-popup b { color: var(--text); }
+    .device-popup .spd { color: var(--blue); font-size: 15px; font-weight: 700; }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- Login overlay -->
+<div id="login-overlay">
+  <div class="login-box">
+    <h2>TMSS 监控登录</h2>
+    <input id="inp-user" type="text"     placeholder="用户名" value="admin">
+    <input id="inp-pass" type="password" placeholder="密码"   value="admin123">
+    <div id="login-err"></div>
+    <button id="login-btn">登 录</button>
+  </div>
+</div>
+
+<!-- Header -->
+<div id="header">
+  <div id="conn-dot"></div>
+  <span id="header-title">TMSS 实时监控</span>
+  <div id="header-info">
+    <span id="online-count">在线: 0</span>
+    <span id="user-info">-</span>
+    <button id="logout-btn">退出</button>
+  </div>
+</div>
+
+<!-- Main layout -->
+<div id="main" class="tab-map">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <!-- Device list -->
+    <div id="dev-section">
+      <div class="section-title">设备列表</div>
+      <div id="dev-list"><div class="no-dev">暂无设备</div></div>
+    </div>
+
+    <!-- Log -->
+    <div id="log-section">
+      <div id="log-header">
+        <div class="section-title" style="margin-bottom:0">事件日志</div>
+        <div id="log-filters">
+          <button class="lf-btn active" data-f="all">全部</button>
+          <button class="lf-btn" data-f="loc">定位</button>
+          <button class="lf-btn" data-f="alert">告警</button>
+          <button class="lf-btn" data-f="conn">状态</button>
+        </div>
+        <button id="clear-log-btn">清空</button>
+      </div>
+      <div id="log-list"></div>
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map-container">
+    <div id="map"></div>
+    <div id="map-info">
+      <b>点击设备卡片定位</b><br>
+      右键地图可复制坐标
+    </div>
+  </div>
+</div>
+
+<!-- Mobile bottom nav -->
+<nav id="mobile-nav">
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-map-btn" onclick="setTab('map')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 11l19-9-9 19-2-8-8-2z"/>
+      </svg>
+      地图
+    </button>
+    <button class="tab-btn" id="tab-log-btn" onclick="setTab('log')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+      </svg>
+      日志
+    </button>
+  </div>
+</nav>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────
+const MAX_LOG = 200;
+const devices   = {};   // device_id → {id, imei, vehicle_id, online, lat, lng, speed, altitude, lastTs, marker, trail}
+const vehicles  = {};   // vehicle_id → {id, license_plate, fleet_id}
+let logFilter = 'all';
+let logPaused = false;
+let sse = null;
+let reconnTimer = null;
+let reconnDelay = 2000;
+
+// ─── WGS-84 → GCJ-02 坐标转换（设备发 WGS84，高德地图用 GCJ02）─────────
+function wgs2gcj(lng, lat) {
+  const a = 6378245.0, ee = 0.00669342162296594323, pi = Math.PI;
+  const tLat = (x, y) => {
+    let r = -100 + 2*x + 3*y + .2*y*y + .1*x*y + .2*Math.sqrt(Math.abs(x));
+    r += (20*Math.sin(6*x*pi) + 20*Math.sin(2*x*pi)) * 2/3;
+    r += (20*Math.sin(y*pi)   + 40*Math.sin(y/3*pi)) * 2/3;
+    r += (160*Math.sin(y/12*pi) + 320*Math.sin(y/30*pi)) * 2/3;
+    return r;
+  };
+  const tLng = (x, y) => {
+    let r = 300 + x + 2*y + .1*x*x + .1*x*y + .1*Math.sqrt(Math.abs(x));
+    r += (20*Math.sin(6*x*pi) + 20*Math.sin(2*x*pi)) * 2/3;
+    r += (20*Math.sin(x*pi)   + 40*Math.sin(x/3*pi)) * 2/3;
+    r += (150*Math.sin(x/12*pi) + 300*Math.sin(x/30*pi)) * 2/3;
+    return r;
+  };
+  const dLat = tLat(lng - 105, lat - 35);
+  const dLng = tLng(lng - 105, lat - 35);
+  const rad  = lat / 180 * pi;
+  let magic  = Math.sin(rad);
+  magic = 1 - ee * magic * magic;
+  const sq = Math.sqrt(magic);
+  return [lng + dLng * 180 / (a / sq * Math.cos(rad) * pi),
+          lat + dLat * 180 / ((a * (1 - ee)) / (magic * sq) * pi)];
+}
+
+// ─── Map init ────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([32.10, 118.88], 15);
+// 高德地图瓦片（GCJ-02，无需 API Key）
+L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+  attribution: '© <a href="https://www.amap.com" style="color:#94a3b8">高德地图</a>',
+  subdomains: ['1','2','3','4'], maxZoom: 18
+}).addTo(map);
+
+// Right-click to copy coords (GCJ-02，高德地图实际坐标)
+map.on('contextmenu', e => {
+  const txt = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+  navigator.clipboard?.writeText(txt).then(() => showMapInfo(`已复制坐标(GCJ02): ${txt}`, 3000));
+});
+
+// ─── Login ───────────────────────────────────────────────────────────────
+document.getElementById('login-btn').onclick = doLogin;
+document.getElementById('inp-pass').onkeydown = e => e.key === 'Enter' && doLogin();
+
+async function doLogin() {
+  const u = document.getElementById('inp-user').value.trim();
+  const p = document.getElementById('inp-pass').value;
+  document.getElementById('login-err').textContent = '';
+  document.getElementById('login-btn').disabled = true;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'include',
+      body: JSON.stringify({username: u, password: p})
+    });
+    const d = await res.json();
+    if (d.ok) {
+      document.getElementById('login-overlay').classList.add('hidden');
+      document.getElementById('user-info').textContent = `${d.data.username} (${d.data.role})`;
+      await loadInitialData();
+      startSSE();
+    } else {
+      document.getElementById('login-err').textContent = d.message || '登录失败';
+    }
+  } catch(err) {
+    document.getElementById('login-err').textContent = '网络错误';
+  } finally {
+    document.getElementById('login-btn').disabled = false;
+  }
+}
+
+document.getElementById('logout-btn').onclick = async () => {
+  await fetch('/api/auth/logout', {method: 'POST', credentials: 'include'});
+  stopSSE();
+  Object.keys(devices).forEach(id => {
+    const d = devices[id];
+    if (d.marker) map.removeLayer(d.marker);
+    if (d.trail)  map.removeLayer(d.trail);
+    delete devices[id];
+  });
+  renderDevList();
+  document.getElementById('login-overlay').classList.remove('hidden');
+  setConnDot('');
+};
+
+// ─── Initial data load ───────────────────────────────────────────────────
+async function loadInitialData() {
+  try {
+    const [devRes, vehRes] = await Promise.all([
+      fetch('/api/devices',  {credentials: 'include'}).then(r => r.json()),
+      fetch('/api/vehicles', {credentials: 'include'}).then(r => r.json()),
+    ]);
+    if (vehRes.ok) vehRes.data.forEach(v => { vehicles[v.id] = v; });
+    if (devRes.ok) {
+      devRes.data.forEach(d => {
+        if (!devices[d.id]) {
+          devices[d.id] = {
+            id: d.id, imei: d.imei, vehicle_id: null,
+            online: false, lat: null, lng: null, speed: null,
+            altitude: null, lastTs: null, marker: null, trail: null, trailPts: []
+          };
+        }
+      });
+      renderDevList();
+    }
+  } catch(e) { console.warn('loadInitialData error', e); }
+}
+
+// ─── SSE ─────────────────────────────────────────────────────────────────
+function startSSE() {
+  stopSSE();
+  setConnDot('warn');
+  sse = new EventSource('/api/stream', {withCredentials: true});
+
+  sse.addEventListener('location', e => {
+    const d = JSON.parse(e.data);
+    onLocation(d);
+  });
+  sse.addEventListener('alert', e => {
+    const d = JSON.parse(e.data);
+    onAlert(d);
+  });
+  sse.addEventListener('device_state', e => {
+    const d = JSON.parse(e.data);
+    onDeviceState(d);
+  });
+  sse.onmessage = e => {
+    // 匿名事件（connected）
+    try {
+      const d = JSON.parse(e.data);
+      if (d.event === 'connected') { setConnDot('ok'); reconnDelay = 2000; }
+    } catch(_) {}
+  };
+  sse.onerror = () => {
+    setConnDot('err');
+    sse.close();
+    sse = null;
+    reconnTimer = setTimeout(() => {
+      reconnDelay = Math.min(reconnDelay * 1.5, 30000);
+      startSSE();
+    }, reconnDelay);
+  };
+}
+
+function stopSSE() {
+  if (sse) { sse.close(); sse = null; }
+  if (reconnTimer) { clearTimeout(reconnTimer); reconnTimer = null; }
+}
+
+// ─── Event handlers ──────────────────────────────────────────────────────
+function onLocation(d) {
+  let dev = devices[d.device_id];
+  if (!dev) {
+    dev = { id: d.device_id, imei: '?', vehicle_id: d.vehicle_id,
+            online: true, lat: null, lng: null, speed: null,
+            altitude: null, lastTs: null, marker: null, trail: null, trailPts: [] };
+    devices[d.device_id] = dev;
+  }
+  dev.online = true;
+  dev.vehicle_id = d.vehicle_id;
+  dev.lat = d.lat; dev.lng = d.lng;
+  dev.speed = d.speed; dev.altitude = d.altitude;
+  dev.lastTs = d.ts;
+  updateMarker(dev);
+  renderDevList();
+
+  const plate = plateName(dev);
+  const spd = d.speed != null ? d.speed.toFixed(2) + ' km/h' : '-';
+  addLog('loc',
+    `<b>${plate}</b>  ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}  速度 ${spd}`,
+    d.ts
+  );
+}
+
+function onAlert(d) {
+  const dev = devices[d.device_id];
+  const plate = dev ? plateName(dev) : `#${d.device_id}`;
+  const typeMap = { overspeed: '超速', geofence_exit: '超界', operation_ban: '禁运时段' };
+  const typeName = typeMap[d.type] || d.type;
+  const spd = d.speed != null ? `  ${d.speed.toFixed(1)} km/h` : '';
+  addLog('alert', `<b style="color:#f87171">[${typeName}]</b>  ${plate}${spd}  📍 ${d.lat?.toFixed(5)}, ${d.lng?.toFixed(5)}`, d.ts);
+}
+
+function onDeviceState(d) {
+  let dev = devices[d.device_id];
+  if (!dev) {
+    dev = { id: d.device_id, imei: d.imei || '?', vehicle_id: d.vehicle_id,
+            online: false, lat: null, lng: null, speed: null,
+            altitude: null, lastTs: null, marker: null, trail: null, trailPts: [] };
+    devices[d.device_id] = dev;
+  }
+  if (d.type === 'connected') {
+    dev.online = true;
+    dev.imei = d.imei || dev.imei;
+    dev.vehicle_id = d.vehicle_id ?? dev.vehicle_id;
+    addLog('conn', `<b>${plateName(dev)}</b>  (${dev.imei}) 上线`, d.ts || new Date().toISOString());
+  } else {
+    dev.online = false;
+    if (dev.marker) {
+      dev.marker.setStyle({fillColor: '#ef4444', fillOpacity: .6});
+    }
+    addLog('disc', `<b>${plateName(dev)}</b>  (${dev.imei}) 下线`, d.ts || new Date().toISOString());
+  }
+  renderDevList();
+  updateOnlineCount();
+}
+
+// ─── Map markers ─────────────────────────────────────────────────────────
+const TRAIL_MAX = 60;
+
+function updateMarker(dev) {
+  if (dev.lat == null) return;
+  // 设备发 WGS-84，高德地图需 GCJ-02，做坐标转换
+  const [gcjLng, gcjLat] = wgs2gcj(dev.lng, dev.lat);
+  const latlng = [gcjLat, gcjLng];
+  if (!dev.marker) {
+    dev.marker = L.circleMarker(latlng, markerStyle(dev)).addTo(map);
+    dev.marker.on('click', () => zoomToDevice(dev.id));
+    dev.trailPts = [];
+    dev.trail = L.polyline([], {color: '#38bdf8', weight: 2, opacity: .6}).addTo(map);
+  } else {
+    dev.marker.setLatLng(latlng);
+    dev.marker.setStyle(markerStyle(dev));
+  }
+  dev.marker.bindPopup(buildPopup(dev), {maxWidth: 220});
+
+  dev.trailPts.push(latlng);
+  if (dev.trailPts.length > TRAIL_MAX) dev.trailPts.shift();
+  dev.trail.setLatLngs(dev.trailPts);
+}
+
+function markerStyle(dev) {
+  const spd = dev.speed || 0;
+  const color = !dev.online ? '#ef4444' : spd > 0.5 ? '#22c55e' : '#eab308';
+  return { radius: 8, fillColor: color, color: '#fff', weight: 2, opacity: 1, fillOpacity: .9 };
+}
+
+function buildPopup(dev) {
+  const plate  = plateName(dev);
+  const spd    = dev.speed != null ? dev.speed.toFixed(2) : '-';
+  const alt    = dev.altitude != null ? dev.altitude.toFixed(1) + ' m' : '-';
+  const ts     = dev.lastTs ? fmtTime(dev.lastTs) : '-';
+  return `<div class="device-popup">
+    <b>${plate}</b><br>
+    IMEI: ${dev.imei}<br>
+    速度: <span class="spd">${spd}</span> km/h<br>
+    海拔: ${alt}<br>
+    更新: ${ts}
+  </div>`;
+}
+
+function zoomToDevice(deviceId) {
+  const dev = devices[deviceId];
+  if (dev?.lat != null) {
+    const [gcjLng, gcjLat] = wgs2gcj(dev.lng, dev.lat);
+    map.setView([gcjLat, gcjLng], Math.max(map.getZoom(), 17), {animate: true});
+    dev.marker?.openPopup();
+  }
+}
+
+// ─── Device list ─────────────────────────────────────────────────────────
+function renderDevList() {
+  const container = document.getElementById('dev-list');
+  const devArr = Object.values(devices);
+  if (devArr.length === 0) {
+    container.innerHTML = '<div class="no-dev">暂无设备</div>';
+    return;
+  }
+  // Online first
+  devArr.sort((a, b) => b.online - a.online);
+  container.innerHTML = devArr.map(d => {
+    const plate = plateName(d);
+    const spd   = d.speed != null ? d.speed.toFixed(2) + ' km/h' : '-';
+    const ts    = d.lastTs ? fmtTime(d.lastTs) : '-';
+    return `<div class="dev-card ${d.online ? 'online' : 'offline'}" onclick="zoomToDevice(${d.id})">
+      <div class="dev-head">
+        <span class="dot ${d.online ? 'online' : 'offline'}"></span>
+        <span class="dev-name">${plate}</span>
+        <span class="dev-imei">${d.imei.slice(-8)}</span>
+      </div>
+      <div class="dev-meta">
+        <span>速度 ${spd}</span>
+        <span>${ts}</span>
+      </div>
+    </div>`;
+  }).join('');
+  updateOnlineCount();
+}
+
+function updateOnlineCount() {
+  const cnt = Object.values(devices).filter(d => d.online).length;
+  document.getElementById('online-count').textContent = `在线: ${cnt}`;
+}
+
+// ─── Log ─────────────────────────────────────────────────────────────────
+const logEntries = [];
+
+function addLog(type, msg, tsStr) {
+  const entry = {type, msg, ts: tsStr};
+  logEntries.push(entry);
+  if (logEntries.length > MAX_LOG) logEntries.shift();
+
+  // Only render if visible
+  if (logFilter !== 'all' && !typeMatchesFilter(type, logFilter)) return;
+  if (logPaused) return;
+
+  const el = document.getElementById('log-list');
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.dataset.type = type;
+  const [tagCls, tagLabel] = tagInfo(type);
+  div.innerHTML = `<span class="log-tag ${tagCls}">${tagLabel}</span>
+    <span class="log-body">${msg}</span>
+    <span class="log-time">${tsStr ? fmtTime(tsStr) : ''}</span>`;
+  el.appendChild(div);
+
+  // Trim DOM
+  while (el.children.length > MAX_LOG) el.removeChild(el.firstChild);
+  // Auto scroll
+  el.scrollTop = el.scrollHeight;
+}
+
+function typeMatchesFilter(type, f) {
+  if (f === 'loc')   return type === 'loc';
+  if (f === 'alert') return type === 'alert';
+  if (f === 'conn')  return type === 'conn' || type === 'disc';
+  return true;
+}
+
+function tagInfo(type) {
+  switch(type) {
+    case 'loc':   return ['tag-loc',   'GPS'];
+    case 'alert': return ['tag-alert', '告警'];
+    case 'conn':  return ['tag-conn',  '上线'];
+    case 'disc':  return ['tag-disc',  '下线'];
+    default:      return ['tag-loc',   type];
+  }
+}
+
+// Log filter buttons
+document.getElementById('log-filters').onclick = e => {
+  const btn = e.target.closest('.lf-btn');
+  if (!btn) return;
+  document.querySelectorAll('.lf-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  logFilter = btn.dataset.f;
+  rerenderLog();
+};
+
+document.getElementById('clear-log-btn').onclick = () => {
+  logEntries.length = 0;
+  document.getElementById('log-list').innerHTML = '';
+};
+
+// Pause scroll on hover
+document.getElementById('log-list').addEventListener('mouseenter', () => logPaused = true);
+document.getElementById('log-list').addEventListener('mouseleave', () => {
+  logPaused = false;
+  document.getElementById('log-list').scrollTop = document.getElementById('log-list').scrollHeight;
+});
+
+function rerenderLog() {
+  const el = document.getElementById('log-list');
+  el.innerHTML = '';
+  const filtered = logFilter === 'all' ? logEntries : logEntries.filter(e => typeMatchesFilter(e.type, logFilter));
+  filtered.slice(-MAX_LOG).forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'log-entry'; div.dataset.type = e.type;
+    const [tagCls, tagLabel] = tagInfo(e.type);
+    div.innerHTML = `<span class="log-tag ${tagCls}">${tagLabel}</span>
+      <span class="log-body">${e.msg}</span>
+      <span class="log-time">${e.ts ? fmtTime(e.ts) : ''}</span>`;
+    el.appendChild(div);
+  });
+  el.scrollTop = el.scrollHeight;
+}
+
+// ─── Mobile tabs ─────────────────────────────────────────────────────────
+function setTab(tab) {
+  const main = document.getElementById('main');
+  main.className = 'tab-' + tab;
+  document.getElementById('tab-map-btn').classList.toggle('active', tab === 'map');
+  document.getElementById('tab-log-btn').classList.toggle('active', tab === 'log');
+  if (tab === 'map') {
+    // 稍微延迟，确保 DOM 可见后再刷新尺寸
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
+function plateName(dev) {
+  if (dev.vehicle_id && vehicles[dev.vehicle_id]) {
+    return vehicles[dev.vehicle_id].license_plate;
+  }
+  return `设备#${dev.id}`;
+}
+
+function fmtTime(isoStr) {
+  try {
+    const d = new Date(isoStr);
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch(_) { return isoStr; }
+}
+
+function setConnDot(state) {
+  const dot = document.getElementById('conn-dot');
+  dot.className = state ? `${state}` : '';
+}
+
+function showMapInfo(msg, ms = 3000) {
+  const el = document.getElementById('map-info');
+  el.innerHTML = msg;
+  if (ms) setTimeout(() => { el.innerHTML = '<b>点击设备卡片定位</b><br>右键地图可复制坐标'; }, ms);
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────
+// Try session check on load
+(async () => {
+  try {
+    const res = await fetch('/api/devices', {credentials: 'include'});
+    const d = await res.json();
+    if (d.ok) {
+      // Already logged in
+      document.getElementById('login-overlay').classList.add('hidden');
+      // Get user info
+      const meRes = await fetch('/api/auth/me', {credentials: 'include'}).catch(() => null);
+      if (meRes?.ok) {
+        const me = await meRes.json();
+        if (me.ok) document.getElementById('user-info').textContent = `${me.data.username} (${me.data.role})`;
+      }
+      await loadInitialData();
+      startSSE();
+    }
+  } catch(_) {}
+})();
+</script>
+</body>
+</html>

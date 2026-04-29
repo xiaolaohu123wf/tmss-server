@@ -6,6 +6,7 @@ from typing import Optional
 import structlog
 
 from app.core.device_registry import device_registry
+from app.core.event_bus import event_bus
 from app.db.pool import get_pool
 from app.db.queries.business_config import SELECT_BUSINESS_CONFIG_SQL
 from app.core.enums import ZoneType
@@ -225,6 +226,12 @@ class ConnectionHandler:
 
     async def _cleanup(self) -> None:
         if self._device_id is not None:
+            await event_bus.publish("device_state", {
+                "event": "device_state",
+                "type": "disconnected",
+                "device_id": self._device_id,
+                "imei": self._imei or "",
+            })
             await device_registry.unregister(self._device_id)
         try:
             self._writer.close()

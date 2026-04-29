@@ -8,6 +8,7 @@ import structlog
 
 from app.core.device_registry import DeviceRegistry
 from app.core.enums import Command
+from app.core.event_bus import event_bus
 from app.db.repos.device_repo import DeviceRepo
 
 logger = structlog.get_logger()
@@ -79,6 +80,16 @@ class RegisterHandler:
             await logger.ainfo(
                 "greeting_sent", device_id=device_id, imei=imei, cmd=cmd.value
             )
+
+        # 推送设备上线事件
+        await event_bus.publish("device_state", {
+            "event": "device_state",
+            "type": "connected",
+            "device_id": device_id,
+            "imei": imei,
+            "vehicle_id": vehicle_id,
+            "fleet_id": fleet_id,
+        })
 
         return device_id
 
