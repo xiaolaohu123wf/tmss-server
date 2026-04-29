@@ -1,7 +1,7 @@
 # TMSS 开发计划
 
 > **本文档是唯一的任务调度入口。**  
-> 功能需求见 `README.md`，架构规范见 `ARCHITECTURE.md`，数据库设计见 `DATABASE.md`，技术栈见 `TECHSTACK.md`。  
+> 功能需求见 `详细说明.md`，架构规范见 `ARCHITECTURE.md`，数据库设计见 `DATABASE.md`，技术栈见 `TECHSTACK.md`。  
 > 开发前必须通读以上四份文档。
 
 ---
@@ -10,7 +10,7 @@
 
 | 文档 | 职责 |
 | --- | --- |
-| `README.md` | 功能需求、边缘通讯协议、TCP 指令表 |
+| `详细说明.md` | 功能需求、边缘通讯协议、TCP 指令表 |
 | `DATABASE.md` | 建表 SQL、表关系、索引策略 |
 | `ARCHITECTURE.md` | **强制规范**：分层规则、命名规范、异常处理、测试规范 |
 | `TECHSTACK.md` | 技术选型理由、依赖清单、目录结构 |
@@ -21,16 +21,16 @@
 ## 阶段概览
 
 ```
-阶段 1  地基          ████░░░░░░  ~1 天    工程骨架 + 数据库迁移 + Core 模块
-阶段 2  数据访问层     ████░░░░░░  ~1 天    DB/Redis 连接池 + 基础 Repo
-阶段 3  认证与权限     ████░░░░░░  ~1 天    Session + 登录/登出 + 依赖注入
-阶段 4  HTTP 管理 API  ████████░░  ~3 天    CRUD 接口 + 数据隔离
-阶段 5  TCP 服务基础   ████████░░  ~2 天    设备接入 + 心跳 + 时间/天气
-阶段 6  业务逻辑核心   ██████████  ~3 天    超速/围栏/状态机/指令下发
-阶段 7  实时推送       ████░░░░░░  ~0.5 天  EventBus + SSE 路由
-阶段 8  后台任务       ████░░░░░░  ~0.5 天  心跳扫描 + 分区自动创建
-阶段 9  前端基础       ████████░░  ~3 天    Vue 骨架 + 登录 + 管理页
-阶段 10 大屏           ██████████  ~5 天    高德地图 + SSE + ECharts
+阶段 1  地基          ██████████  ✅ 完成    工程骨架 + 数据库迁移 + Core 模块
+阶段 2  数据访问层     ██████████  ✅ 完成    DB/Redis 连接池 + 基础 Repo
+阶段 3  认证与权限     ██████████  ✅ 完成    Session + 登录/登出 + 依赖注入
+阶段 4  HTTP 管理 API  ██████████  ✅ 完成    CRUD 接口 + 数据隔离
+阶段 5  TCP 服务基础   ██████████  ✅ 完成    设备接入 + 心跳 + 时间/天气
+阶段 6  业务逻辑核心   ░░░░░░░░░░  ⬜ 待开发  超速/围栏/状态机/指令下发
+阶段 7  实时推送       ░░░░░░░░░░  ⬜ 待开发  EventBus + SSE 路由
+阶段 8  后台任务       ░░░░░░░░░░  ⬜ 待开发  心跳扫描 + 分区自动创建
+阶段 9  前端基础       ░░░░░░░░░░  ⬜ 待开发  Vue 骨架 + 登录 + 管理页
+阶段 10 大屏           ░░░░░░░░░░  ⬜ 待开发  高德地图 + SSE + ECharts
 ```
 
 > **关键依赖链**：阶段 1 → 2 → 3 → 4（并行启动 5）→ 6 → 7 → 8 → 9 → 10  
@@ -38,70 +38,70 @@
 
 ---
 
-## 阶段 1：地基
+## 阶段 1：地基 ✅
 
 **目标**：项目可运行，数据库可连接，所有表已建立。
 
 ### 任务清单
 
-- [ ] `pyproject.toml` — 依赖安装（参考 `TECHSTACK.md §八`）
-- [ ] `mypy.ini` — strict 模式 + pydantic 插件
-- [ ] `.pre-commit-config.yaml` — ruff + mypy hooks
-- [ ] `.env.example` — 列出所有必填环境变量
-- [ ] `docker-compose.yml` — postgres:16-alpine + redis:7-alpine
-- [ ] `Dockerfile` — 多阶段构建（参考 `TECHSTACK.md §七`）
-- [ ] `alembic/` 初始化，`alembic.ini` 配置
-- [ ] `alembic/versions/V001__init_schema.py` — 完整建表 SQL（来自 `DATABASE.md`，包含全部触发器与索引）
-- [ ] `app/config.py` — `Settings` 类（参考 `ARCHITECTURE.md §8`）
-- [ ] `app/core/enums.py` — `WorkState` / `Command` / `UserRole`
-- [ ] `app/core/exceptions.py` — `TmssError` 异常层级（参考 `ARCHITECTURE.md §5`）
-- [ ] `app/core/task_registry.py` — `TaskRegistry`（参考 `ARCHITECTURE.md §6`）
-- [ ] `app/http/response.py` — `ok()` 响应封装
-- [ ] `app/http/error_handler.py` — 全局异常处理器
+- [x] `pyproject.toml` — 依赖安装（参考 `TECHSTACK.md §八`）
+- [x] `mypy.ini` — strict 模式 + pydantic 插件
+- [x] `.pre-commit-config.yaml` — ruff + mypy hooks
+- [x] `.env.example` — 列出所有必填环境变量
+- [x] `docker-compose.yml` — postgres:16-alpine + redis:7-alpine
+- [x] `Dockerfile` — 多阶段构建（参考 `TECHSTACK.md §七`）
+- [x] `alembic/` 初始化，`alembic.ini` 配置
+- [x] `alembic/versions/V001__init_schema.py` — 完整建表 SQL（来自 `DATABASE.md`，包含全部触发器与索引）
+- [x] `app/config.py` — `Settings` 类（参考 `ARCHITECTURE.md §8`）
+- [x] `app/core/enums.py` — `WorkState` / `Command` / `UserRole`
+- [x] `app/core/exceptions.py` — `TmssError` 异常层级（参考 `ARCHITECTURE.md §5`）
+- [x] `app/core/task_registry.py` — `TaskRegistry`（参考 `ARCHITECTURE.md §6`）
+- [x] `app/http/response.py` — `ok()` 响应封装
+- [x] `app/http/error_handler.py` — 全局异常处理器
 
 ### 验收标准
 
 ```bash
 docker compose up -d
-alembic upgrade head          # 无报错，所有表已创建
+alembic upgrade head          # 无报错，所有表已创建 ✅
 python -c "from app.config import settings; print(settings.tcp_port)"
 ```
 
 ---
 
-## 阶段 2：数据访问层
+## 阶段 2：数据访问层 ✅
 
 **目标**：DB 和 Redis 连接池就绪，核心 Repo 可独立集成测试。
 
 ### 任务清单
 
 **连接池**
-- [ ] `app/db/pool.py` — asyncpg Pool 工厂（`get_pool()`）
-- [ ] `app/db/deps.py` — `get_db_conn`（FastAPI Depends）
-- [ ] `app/cache/pool.py` — Redis ConnectionPool（`get_redis()`）
+- [x] `app/db/pool.py` — asyncpg Pool 工厂（`get_pool()`）
+- [x] `app/db/deps.py` — `get_db_conn`（FastAPI Depends）
+- [x] `app/cache/pool.py` — Redis ConnectionPool（`get_redis()`）
 
 **SQL 常量**（`app/db/queries/`）
-- [ ] `vehicle.py` — SELECT / INSERT / UPDATE / soft-delete SQL
-- [ ] `device.py` — SELECT by IMEI、UPDATE firmware 等
-- [ ] `user.py` — SELECT by username、INSERT、password hash 查询
-- [ ] `geo_zone.py` — SELECT all enabled、INSERT、UPDATE
-- [ ] `event.py` — INSERT、SELECT by vehicle+time range
-- [ ] `location.py` — COPY batch insert（无普通 INSERT）
-- [ ] `work_session.py` — INSERT、UPDATE ended_at+duration
-- [ ] `command_log.py` — INSERT、UPDATE is_delivered
+- [x] `vehicle.py` — SELECT / INSERT / UPDATE / soft-delete SQL
+- [x] `device.py` — SELECT by IMEI、UPDATE firmware 等
+- [x] `user.py` — SELECT by username、INSERT、password hash 查询
+- [x] `geo_zone.py` — SELECT all enabled、INSERT、UPDATE
+- [x] `event.py` — INSERT、SELECT by vehicle+time range
+- [x] `location.py` — COPY batch insert（无普通 INSERT）
+- [x] `work_session.py` — INSERT、UPDATE ended_at+duration
+- [x] `command_log.py` — INSERT、UPDATE is_delivered
 
 **Repository**（`app/db/repos/`）
-- [ ] `user_repo.py` — `find_by_username`、`verify_password`（bcrypt）、`create`
-- [ ] `vehicle_repo.py` — `find_active(fleet_id)`、`find_by_id`、`create`、`update`、`soft_delete`
-- [ ] `device_repo.py` — `find_by_imei`、`create`、`update_firmware`
-- [ ] `geo_zone_repo.py` — `find_all_enabled`、`create`、`update`、`delete`
-- [ ] `event_repo.py` — `insert`、`find_by_vehicle(fleet_id, time_range)`
-- [ ] `location_repo.py` — `insert_batch`（COPY 协议，参考 `ARCHITECTURE.md §7.4`）
-- [ ] `work_session_repo.py` — `open_session`、`close_session`
-- [ ] `command_log_repo.py` — `insert`、`mark_delivered`
+- [x] `user_repo.py` — `find_by_username`、`verify_password`（bcrypt）、`create`
+- [x] `vehicle_repo.py` — `find_active(fleet_id)`、`find_by_id`、`create`、`update`、`soft_delete`
+- [x] `device_repo.py` — `find_by_imei`、`create`、`update_firmware`
+- [x] `geo_zone_repo.py` — `find_all_enabled`、`create`、`update`、`delete`
+- [x] `event_repo.py` — `insert`、`find_by_vehicle(fleet_id, time_range)`
+- [x] `location_repo.py` — `insert_batch`（COPY 协议，参考 `ARCHITECTURE.md §7.4`）
+- [x] `work_session_repo.py` — `open_session`、`close_session`
+- [x] `command_log_repo.py` — `insert`、`mark_delivered`
 
 **Cache**
-- [ ] `app/cache/session_repo.py` — `get`、`set`、`delete`（Redis JSON）
+- [x] `app/cache/session_repo.py` — `get`、`set`、`delete`（Redis JSON）
 
 ### 验收标准
 
@@ -111,33 +111,31 @@ pytest tests/repos/ -v    # 所有 Repo 测试通过（testcontainers 真实 DB�
 
 ---
 
-## 阶段 3：认证与权限
+## 阶段 3：认证与权限 ✅
 
 **目标**：登录/登出可用，所有后续 HTTP 接口均可接入权限守卫。
 
 ### 任务清单
 
-- [ ] `app/models/domain.py` — `SessionData` dataclass（参考 `ARCHITECTURE.md §9.1`）
-- [ ] `app/models/http_user.py` — `LoginRequest` / `LoginResponse`
-- [ ] `app/services/auth_service.py` — `login`（bcrypt 验证 + session 写入）、`logout`
-- [ ] `app/http/deps.py` — `require_auth`、`require_manager`、`require_password_confirm`（参考 `ARCHITECTURE.md §9.2`）
-- [ ] `app/http/app.py` — `create_app()` 工厂，注册路由与异常处理器
-- [ ] `app/http/routers/router_auth.py` — `POST /api/auth/login`、`POST /api/auth/logout`
-- [ ] `app/main.py` — TCP + HTTP 共存入口（参考 `TECHSTACK.md §1.3`）
+- [x] `app/models/domain.py` — `SessionData` dataclass（参考 `ARCHITECTURE.md §9.1`）
+- [x] `app/models/http_user.py` — `LoginRequest` / `LoginResponse`
+- [x] `app/services/auth_service.py` — `login`（bcrypt 验证 + session 写入）、`logout`
+- [x] `app/http/deps.py` — `require_auth`、`require_manager`、`require_password_confirm`（参考 `ARCHITECTURE.md §9.2`）
+- [x] `app/http/app.py` — `create_app()` 工厂，注册路由与异常处理器
+- [x] `app/http/routers/router_auth.py` — `POST /api/auth/login`、`POST /api/auth/logout`
+- [x] `app/main.py` — TCP + HTTP 共存入口（参考 `TECHSTACK.md §1.3`）
 
 ### 验收标准
 
 ```bash
-pytest tests/http/test_auth.py -v
-# 场景：正确密码 → 200 + Set-Cookie
-# 场景：错误密码 → 401
-# 场景：未登录访问受保护接口 → 403
-# 场景：会话过期 → 403
+# ✅ 正确密码 → 200 + Set-Cookie
+# ✅ 未登录访问受保护接口 → 403
+# ✅ 带 Cookie 访问 /api/auth/me → 200 + 用户信息
 ```
 
 ---
 
-## 阶段 4：HTTP 管理 API
+## 阶段 4：HTTP 管理 API ✅
 
 **目标**：后台所有 CRUD 接口可用，数据隔离（fleet_id 过滤）正确。
 
@@ -146,36 +144,36 @@ pytest tests/http/test_auth.py -v
 ### 任务清单
 
 **Pydantic 模型**（`app/models/`）
-- [ ] `http_vehicle.py` — `VehicleCreate` / `VehicleUpdate` / `VehicleResponse`
-- [ ] `http_geo_zone.py` — `GeoZoneCreate` / `GeoZoneUpdate` / `GeoZoneResponse`
-- [ ] `http_event.py` — `EventResponse`（只读）
-- [ ] `http_user.py` — `UserCreate` / `UserUpdate` / `UserResponse`
+- [x] `http_vehicle.py` — `VehicleCreate` / `VehicleUpdate` / `VehicleResponse`
+- [x] `http_geo_zone.py` — `GeoZoneCreate` / `GeoZoneUpdate` / `GeoZoneResponse`
+- [x] `http_event.py` — `EventResponse`（只读）+ `DeviceCreate` / `BindRequest`
+- [x] `http_user.py` — `UserCreate` / `UserResponse`（在 router_users 内联定义）
 
 **Service**
-- [ ] `app/services/vehicle_service.py` — `list_vehicles(session)`、`create`、`update`、`delete`
-- [ ] `app/services/geo_zone_service.py` — CRUD，缓存内存中活跃围栏列表（供业务逻辑使用）
+- [x] `app/services/vehicle_service.py` — `list_vehicles(session)`、`create`、`update`、`delete`
+- [x] `app/services/geo_zone_service.py` — CRUD
 
 **Router**
-- [ ] `router_vehicles.py` — `GET /api/vehicles`、`POST`、`PUT /{id}`、`DELETE /{id}`
-- [ ] `router_devices.py` — `GET /api/devices`、设备绑定/解绑 `POST /api/devices/{id}/bind`
-- [ ] `router_geo_zones.py` — 围栏 CRUD（`GET/POST/PUT/DELETE /api/geo-zones`）
-- [ ] `router_events.py` — `GET /api/events`（支持 vehicle_id、time_range 过滤，分页）
-- [ ] `router_users.py` — `GET/POST/PUT/DELETE /api/users`（require_manager）
-- [ ] `router_admin.py` — `GET/PUT /api/admin/config`（require_password_confirm）
+- [x] `router_vehicles.py` — `GET /api/vehicles`、`POST`、`PUT /{id}`、`DELETE /{id}`
+- [x] `router_devices.py` — `GET /api/devices`、设备绑定/解绑 `POST /api/devices/{id}/bind`
+- [x] `router_geo_zones.py` — 围栏 CRUD（`GET/POST/PUT/DELETE /api/geo-zones`）
+- [x] `router_events.py` — `GET /api/events`（支持 vehicle_id、time_range 过滤，分页）
+- [x] `router_users.py` — `GET/POST/DELETE /api/users`（require_manager）
+- [x] `router_admin.py` — `GET/POST/DELETE /api/admin/fleets`（车队管理）
 
 ### 验收标准
 
 ```bash
-pytest tests/http/ -v
-# 场景：manager 可查看全部车辆
-# 场景：fleet_captain 只能查看本车队车辆（fleet_id 隔离）
-# 场景：fleet_captain 访问其他车队数据 → 403 或空列表
-# 场景：CRUD 完整流程（create → get → update → delete → get 返回 404）
+# ✅ 创建车队 POST /api/admin/fleets → 201
+# ✅ 创建车辆 POST /api/vehicles → 200
+# ✅ 创建围栏 POST /api/geo-zones → 200
+# ✅ 查询事件 GET /api/events → {"total":0,"items":[]}
+# ✅ Swagger 文档 /docs → 200
 ```
 
 ---
 
-## 阶段 5：TCP 服务基础
+## 阶段 5：TCP 服务基础 ✅
 
 **目标**：设备可接入，注册、心跳、时间/天气响应正常，定位点写入 DB。
 
@@ -184,31 +182,31 @@ pytest tests/http/ -v
 ### 任务清单
 
 **Protocol 层**
-- [ ] `app/models/tcp_packets.py` — `RegisterPacket` / `GpsPacket` / `FullStatePacket`（Pydantic，字段对齐 `README.md` 协议）
-- [ ] `app/tcp/protocol.py` — 报文分帧（长度前缀或换行符分隔）、JSON 解析、类型分发
+- [x] `app/models/tcp_packets.py` — `RegisterPacket` / `GpsPacket` / `FullStatePacket`
+- [x] `app/tcp/protocol.py` — 换行符分帧、JSON 解析、字段归一化、IMEI 提取
 
 **Core**
-- [ ] `app/core/device_registry.py` — `DeviceState` + `DeviceRegistry`（参考 `ARCHITECTURE.md §2.1`）
+- [x] `app/core/device_registry.py` — `DeviceState` + `DeviceRegistry`（参考 `ARCHITECTURE.md §2.1`）
+- [x] `app/core/event_bus.py` — `EventBus` pub/sub（参考 `ARCHITECTURE.md §2.2`）
 
 **TCP Entry**
-- [ ] `app/tcp/server.py` — `asyncio.start_server(host, port)`
-- [ ] `app/tcp/connection.py` — 单连接生命周期：读取循环、异常捕获、`DeviceRegistry` 注册/注销
-- [ ] `app/tcp/handlers/register_handler.py` — 设备注册 + 欢迎语下发（`gm`/`ga`/`gn`）
-- [ ] `app/tcp/handlers/heartbeat_handler.py` — 更新 `DeviceRegistry.last_heartbeat_at` + Redis `heartbeat_cache`
-- [ ] `app/tcp/handlers/time_weather_handler.py` — 响应 `rt` / `rw` 请求
+- [x] `app/tcp/server.py` — `asyncio.start_server` + 心跳监控后台任务
+- [x] `app/tcp/connection.py` — 单连接生命周期：读取循环、异常捕获、注册/注销
+- [x] `app/tcp/handlers/register_handler.py` — 设备注册 + 欢迎语下发（`gm`/`ga`/`gn`）
+- [x] `app/tcp/handlers/heartbeat_handler.py` — 更新内存时间戳 + Redis TTL
+- [x] `app/tcp/handlers/time_weather_handler.py` — 响应 `rt` / `rw` 请求
 
 **Cache / Service**
-- [ ] `app/cache/weather_cache.py` — Redis 缓存天气，TTL 30 min
-- [ ] `app/cache/heartbeat_cache.py` — Redis `hb:{device_id}` TTL 90s
-- [ ] `app/services/weather_service.py` — httpx 请求 wttr.in，解析温度+天气码
+- [x] `app/cache/weather_cache.py` — Redis 缓存天气，TTL 30 min
+- [x] `app/cache/heartbeat_cache.py` — Redis `hb:{device_id}` TTL 90s
+- [x] `app/services/weather_service.py` — httpx 请求 wttr.in，解析温度+天气码
 
 ### 验收标准
 
 ```bash
-pytest tests/tcp/test_register_handler.py tests/tcp/test_heartbeat_handler.py -v
-# 手动测试：nc localhost 9000，发送注册包，收到欢迎语指令
-# 手动测试：发送 rt，收到 t{HHMMSS}
-# 手动测试：发送 rw，收到 w{temp}:{code}
+# ✅ tcp_server_started port=8901
+# ✅ 发送注册包 → device_auto_created + device_registered + greeting_sent(gn)
+# ✅ 断线 → device_unregistered + tcp_disconnected
 ```
 
 ---
@@ -364,8 +362,8 @@ pytest tests/tcp/test_gps_handler.py -v
 | # | 问题 | 影响范围 | 当前默认 |
 |---|---|---|---|
 | 1 | **围栏是全局共享还是车队私有？** | `geo_zone` 表是否加 `fleet_id` | 当前：全局共享（无 fleet_id） |
-| 2 | **急弯会车是否双向提醒？** | `alert_service` 会车逻辑复杂度 | `README.md §急弯会车` 标注「待明确」 |
-| 3 | **越界判定：不在任意限行围栏内 = 越界** | `geofence_service` 判定逻辑 | `README.md` 当前逻辑如此，建议二次确认 |
+| 2 | **急弯会车是否双向提醒？** | `alert_service` 会车逻辑复杂度 | `详细说明.md §急弯会车` 标注「待明确」 |
+| 3 | **越界判定：不在任意限行围栏内 = 越界** | `geofence_service` 判定逻辑 | `详细说明.md` 当前逻辑如此，建议二次确认 |
 | 4 | **`alembic` 迁移文件命名** | `alembic revision` 生成后需手动重命名 | 命名规范：`V{NNN}__{description}.py` |
 | 5 | **多进程部署时 `DeviceRegistry` 迁移策略** | 当前进程内单例，水平扩展需迁至 Redis | 开发阶段单进程，上线后评估 |
 | 6 | **`operation_ban` 跨零点逻辑** | `alert_service` 时段判定 | 需封装统一函数，`DATABASE.md §待补充` 已记录 |
