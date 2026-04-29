@@ -1,0 +1,53 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8901:8901"
+      - "8900:8900"
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tmss_db
+      POSTGRES_USER: tmss
+      POSTGRES_PASSWORD: tmss
+    ports:
+      - "5433:5432"   # 改用 5433 避免与宿主机已有 PostgreSQL 冲突
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tmss -d tmss_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - local-db   # 默认不启动，使用宿主机已有 PostgreSQL 时不需要此服务
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - app
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+  redis_data:
