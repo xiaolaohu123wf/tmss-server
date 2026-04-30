@@ -30,6 +30,7 @@ const menuItems = computed(() => {
     { name: 'devices', path: '/devices', icon: 'Cellphone', label: '设备管理' },
     { name: 'geoZones', path: '/geo-zones', icon: 'MapLocation', label: '围栏管理' },
     { name: 'events', path: '/events', icon: 'Bell', label: '事件查询' },
+    { name: 'tracks', path: '/tracks', icon: 'Guide', label: '轨迹查询' },
   ]
   if (auth.isManager) {
     items.push(

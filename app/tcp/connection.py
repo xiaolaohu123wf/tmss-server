@@ -17,7 +17,7 @@ from app.tcp.handlers.time_weather_handler import TimeWeatherHandler
 from app.tcp.handlers.gps_handler import GpsHandler
 from app.tcp.handlers.full_state_handler import FullStateHandler
 from app.tcp.protocol import extract_imei, parse_frame, split_frames
-from app.tcp.raw_trace import record_rx
+from app.tcp.raw_trace import record_rx, record_tx
 from app.models.tcp_packets import FullStatePacket
 
 logger = structlog.get_logger()
@@ -30,6 +30,17 @@ _time_weather_handler = TimeWeatherHandler()
 _full_state_handler = FullStateHandler(device_registry)
 _gps_handler: Optional[GpsHandler] = None
 _geo_zone_repo = GeoZoneRepo()
+
+
+def _normalize_module_imei(raw: str) -> str:
+    """设备号入库存储：纯数字 14 位时前补 0 以符合 CHAR(15) IMEI 字段。"""
+    s = raw.strip()
+    digits = "".join(c for c in s if c.isdigit())
+    if len(digits) == 14:
+        return "0" + digits
+    if len(digits) == 15:
+        return digits
+    return s
 
 
 async def _get_gps_handler() -> GpsHandler:
@@ -110,6 +121,9 @@ class ConnectionHandler:
                 )
 
                 frames, buf = split_frames(buf)
+                if len(frames) > 1:
+                    for raw in frames:
+                        record_rx(self._peer, raw, segment="frame")
                 for raw in frames:
                     await self._dispatch(raw)
 
@@ -164,6 +178,7 @@ class ConnectionHandler:
             return
 
     async def _handle_register(self, obj: dict, raw: bytes) -> None:
+        login_ack = bool(obj.pop("_login_array_ack", False))
         imei = (
             obj.get("imei")
             or obj.get("deviceId")
@@ -174,14 +189,27 @@ class ConnectionHandler:
             await logger.awarning("register_no_imei", peer=self._peer)
             return
 
+        imei = _normalize_module_imei(str(imei))
+
         pool = await get_pool()
         async with pool.acquire() as conn:
-            device_id = await _register_handler.handle(imei, self._writer, conn)
+            device_id = await _register_handler.handle(
+                imei,
+                self._writer,
+                conn,
+                skip_greeting=login_ack,
+            )
 
         if device_id:
             self._device_id = device_id
             self._imei = imei
             await logger.ainfo("device_online", device_id=device_id, imei=imei, peer=self._peer)
+
+        if device_id and login_ack:
+            ack = b"ok"
+            record_tx(self._writer, ack)
+            self._writer.write(ack)
+            await self._writer.drain()
 
     async def _handle_gps(self, obj: dict) -> None:
         if self._device_id is None:

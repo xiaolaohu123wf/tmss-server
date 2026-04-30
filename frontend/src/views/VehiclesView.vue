@@ -43,8 +43,18 @@ const originalDeviceId = ref<number | null>(null)
 const vehicleTypeOptions = [
   { label: '货车', value: 'truck' },
   { label: '装载机', value: 'loader' },
+  { label: '家用车', value: 'passenger_car' },
   { label: '其他', value: 'other' },
 ]
+
+const showLoadCapacityField = computed(() => form.value.vehicle_type !== 'passenger_car')
+
+watch(
+  () => form.value.vehicle_type,
+  (t) => {
+    if (t === 'passenger_car') form.value.load_capacity = undefined
+  },
+)
 
 async function loadData() {
   loading.value = true
@@ -70,7 +80,14 @@ onMounted(async () => {
 function openCreate() {
   editingId.value = null
   dialogTitle.value = '新增车辆'
-  form.value = { license_plate: '', vehicle_type: 'truck', fleet_id: undefined, driver_name: '', notes: '' }
+  form.value = {
+    license_plate: '',
+    vehicle_type: 'truck',
+    fleet_id: undefined,
+    load_capacity: undefined,
+    driver_name: '',
+    notes: '',
+  }
   dialogVisible.value = true
 }
 
@@ -232,7 +249,7 @@ watch(vehicles, () => { void scrollToHighlight() })
             <el-option v-for="o in vehicleTypeOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="载重(t)" prop="load_capacity">
+        <el-form-item v-if="showLoadCapacityField" label="载重(t)" prop="load_capacity">
           <el-input-number v-model="form.load_capacity" :min="0" :precision="1" :controls="false" style="width: 100%" />
         </el-form-item>
         <el-form-item label="驾驶员">

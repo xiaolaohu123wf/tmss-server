@@ -36,6 +36,8 @@ class RegisterHandler:
         imei: str,
         writer: asyncio.StreamWriter,
         conn,   # asyncpg.Connection
+        *,
+        skip_greeting: bool = False,
     ) -> Optional[int]:
         """
         处理设备注册：
@@ -74,7 +76,7 @@ class RegisterHandler:
             fleet_id=fleet_id,
         )
 
-        if should_greet:
+        if should_greet and not skip_greeting:
             cmd = _greeting_command()
             payload = cmd.value.encode("ascii")
             record_tx(writer, payload)

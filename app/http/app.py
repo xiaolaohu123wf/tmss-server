@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     from app.http.routers.router_admin import router as router_admin
     from app.http.routers.router_tcp_messages import router as router_tcp_messages
     from app.http.routers.router_stream import router as router_stream
+    from app.http.routers.router_track_segments import router as router_track_segments
 
     app.include_router(router_auth.router)
     app.include_router(router_vehicles)
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(router_admin)
     app.include_router(router_tcp_messages)
     app.include_router(router_stream)
+    app.include_router(router_track_segments)
 
     # 监控页面
     _static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")

@@ -46,6 +46,7 @@ async def get_tcp_messages(
                 "peer": r.peer,
                 "length": r.length,
                 "truncated": r.truncated,
+                "segment": r.segment,
                 "ascii": record_payload_ascii(r),
                 "hex": r.hex,
             }
@@ -60,8 +61,9 @@ async def get_tcp_messages(
         parts: list[str] = []
         for r in rows:
             kind = "接收" if r.direction == "rx" else "发送"
+            frame_tag = " [逻辑帧]" if r.segment == "frame" else ""
             line1 = (
-                f"{kind} | {r.peer} | {r.ts_iso} | len={r.length}"
+                f"{kind}{frame_tag} | {r.peer} | {r.ts_iso} | len={r.length}"
                 f"{' (truncated)' if r.truncated else ''}"
             )
             line2 = record_payload_ascii(r)
@@ -77,8 +79,9 @@ async def get_tcp_messages(
     body_lines: list[str] = []
     for r in rows:
         flag = "+" if r.truncated else ""
+        seg = "[帧]" if r.segment == "frame" else ""
         body_lines.append(
-            f"{r.ts_iso}\t{r.direction}\t{r.peer}\tlen={r.length}{flag}\t"
+            f"{r.ts_iso}\t{r.direction}\t{seg}\t{r.peer}\tlen={r.length}{flag}\t"
             f"{record_payload_ascii(r)}",
         )
     text_res = PlainTextResponse(

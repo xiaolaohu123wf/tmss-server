@@ -46,6 +46,12 @@ const router = createRouter({
       meta: { layout: 'main', title: '事件查询' },
     },
     {
+      path: '/tracks',
+      name: 'tracks',
+      component: () => import('@/views/TracksView.vue'),
+      meta: { layout: 'main', title: '轨迹查询' },
+    },
+    {
       path: '/users',
       name: 'users',
       component: () => import('@/views/UsersView.vue'),

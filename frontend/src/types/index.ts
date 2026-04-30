@@ -71,7 +71,7 @@ export interface FleetUpdate {
 // Vehicle
 // ────────────────────────────────────────────────────────────
 
-export type VehicleType = 'truck' | 'loader' | 'other'
+export type VehicleType = 'truck' | 'loader' | 'passenger_car' | 'other'
 
 export interface Vehicle {
   id: number

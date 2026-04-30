@@ -93,6 +93,21 @@ export function useAmap(containerId: string, options?: Record<string, unknown>) 
     return new AMap.Marker(opts)
   }
 
+  function createPolyline(
+    path: [number, number][],
+    strokeColor = '#1890ff',
+    strokeWeight = 4,
+  ): AMapPolyline {
+    return new AMap.Polyline({
+      path,
+      strokeColor,
+      strokeWeight,
+      lineJoin: 'round',
+      lineCap: 'round',
+      map: map.value,
+    })
+  }
+
   function createPolygon(
     path: [number, number][],
     extData?: unknown,
@@ -181,6 +196,7 @@ export function useAmap(containerId: string, options?: Record<string, unknown>) 
     isReady,
     init,
     createMarker,
+    createPolyline,
     createPolygon,
     removePolygon,
     updatePolygonColor,

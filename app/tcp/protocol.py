@@ -4,10 +4,26 @@ import json
 import re
 from typing import Optional, Union
 
-_IMEI_RE = re.compile(r"\b(\d{15})\b")
+_IMEI_RE = re.compile(r"\b(\d{14,15})\b")
 
 # 协议中精简字段名 → 标准字段名
 _TYPE_MAP: dict[str, str] = {"g": "gps", "b": "lbs"}
+
+
+def _login_array_to_register_dict(arr: list) -> Optional[dict]:
+    """DTU 常见 JSON 数组登录：["login", "<imei>", ...]。"""
+    if len(arr) < 2:
+        return None
+    if str(arr[0]).lower() != "login":
+        return None
+    imei = str(arr[1]).strip()
+    if not imei:
+        return None
+    return {
+        "type": "register",
+        "imei": imei,
+        "_login_array_ack": True,
+    }
 
 
 def parse_frame(raw: bytes) -> Optional[Union[str, dict, bytes]]:
@@ -45,12 +61,17 @@ def parse_frame(raw: bytes) -> Optional[Union[str, dict, bytes]]:
     if lower == "rw":
         return "rw"
 
-    # JSON 报文
     try:
-        obj: dict = json.loads(text)
-        return _normalize(obj)
-    except (json.JSONDecodeError, ValueError):
-        pass
+        container = json.loads(text)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        container = None
+    if isinstance(container, list):
+        login_reg = _login_array_to_register_dict(container)
+        if login_reg is not None:
+            return login_reg
+        return None
+    if isinstance(container, dict):
+        return _normalize(container)
 
     return None
 
@@ -79,29 +100,54 @@ def extract_imei(raw: bytes) -> Optional[str]:
     except Exception:
         return None
     m = _IMEI_RE.search(text)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    d = m.group(1)
+    if len(d) == 14:
+        return "0" + d
+    return d
 
 
 def split_frames(buf: bytes) -> tuple[list[bytes], bytes]:
     """
     分帧策略（按优先级）：
-    1. 有 \\n 分隔符 → 按行切割（标准模式）
-    2. 无 \\n → 用括号计数法提取完整 JSON 对象（设备直发模式）
-    返回 (已完整帧列表, 剩余不完整数据)。
+    1. 按最早出现的 \\n 或 \\r 切成行（DTU 常用 \\r 串联 rt、rw）
+    2. 剩余数据再尝试 JSON / 心跳粘包解析
     """
     buf = buf.replace(b"\r\n", b"\n")
+    frames: list[bytes] = []
 
-    if b"\n" in buf:
-        frames: list[bytes] = []
-        while b"\n" in buf:
-            frame, buf = buf.split(b"\n", 1)
-            frame = frame.strip()
-            if frame:
-                frames.append(frame)
+    while True:
+        idx_n = buf.find(b"\n")
+        idx_r = buf.find(b"\r")
+        candidates = [i for i in (idx_n, idx_r) if i != -1]
+        if not candidates:
+            break
+        idx = min(candidates)
+        frame, buf = buf[:idx], buf[idx + 1 :]
+        frame = frame.strip()
+        if frame:
+            frames.append(frame)
+
+    tail = buf.strip()
+    if tail.lower() in (b"rt", b"rw"):
+        frames.append(tail)
+        return frames, b""
+
+    if buf:
+        ls = buf.lstrip()
+        head1 = ls[:1]
+        jsonish = head1 in (b"{", b"[") or buf.startswith(b"\x00") or (
+            len(buf) >= 2
+            and buf[:2] == b"00"
+            and _ascii00_followed_by_json_or_end(buf, 2, len(buf))
+        )
+        if jsonish:
+            j_frames, rest = _extract_json_objects(buf)
+            frames.extend(j_frames)
+            return frames, rest
         return frames, buf
-
-    # 无换行符：用括号计数逐个提取 JSON 对象
-    return _extract_json_objects(buf)
+    return frames, b""
 
 
 def _ascii00_followed_by_json_or_end(buf: bytes, j: int, n: int) -> bool:

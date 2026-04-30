@@ -40,7 +40,10 @@ UPDATE_VEHICLE_SQL = """
     UPDATE vehicle
     SET license_plate = COALESCE($2, license_plate),
         vehicle_type  = COALESCE($3, vehicle_type),
-        load_capacity = COALESCE($4, load_capacity),
+        load_capacity = CASE
+            WHEN TRIM(COALESCE($3, vehicle_type)) = 'passenger_car' THEN NULL
+            ELSE COALESCE($4, load_capacity)
+        END,
         notes         = COALESCE($5, notes),
         fleet_id      = COALESCE($6, fleet_id),
         driver_name   = $7

@@ -22,6 +22,7 @@ class RawTraceRecord:
     length: int
     hex: str
     truncated: bool
+    segment: str = "chunk"  # chunk=一次 read；frame=同次 read 内解析出的单条逻辑帧（多帧时才有）
 
 
 _lock = threading.Lock()
@@ -41,20 +42,20 @@ def _hex_snippet(data: bytes) -> tuple[str, bool]:
     return (data[:_MAX_STORE_BYTES].hex(), True)
 
 
-def record_rx(peer: str, data: bytes) -> None:
-    _record("rx", peer, data)
+def record_rx(peer: str, data: bytes, *, segment: str = "chunk") -> None:
+    _record("rx", peer, data, segment=segment)
 
 
 def record_tx(writer: asyncio.StreamWriter, data: bytes) -> None:
-    _record("tx", peer_from_writer(writer), data)
+    _record("tx", peer_from_writer(writer), data, segment="chunk")
 
 
 def record_tx_peer(peer: str, data: bytes) -> None:
     """设备下行等场景已知 peer 时使用。"""
-    _record("tx", peer, data)
+    _record("tx", peer, data, segment="chunk")
 
 
-def _record(direction: str, peer: str, data: bytes) -> None:
+def _record(direction: str, peer: str, data: bytes, *, segment: str = "chunk") -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     hx, trunc = _hex_snippet(data)
     rec = RawTraceRecord(
@@ -64,12 +65,14 @@ def _record(direction: str, peer: str, data: bytes) -> None:
         length=len(data),
         hex=hx,
         truncated=trunc,
+        segment=segment,
     )
     with _lock:
         _buffer.append(rec)
     if settings.tcp_raw_print:
+        seg = f" {segment}" if segment != "chunk" else ""
         print(
-            f"[TCP {direction.upper()}] {ts} {peer} len={len(data)}"
+            f"[TCP {direction.upper()}{seg}] {ts} {peer} len={len(data)}"
             f"{'+' if trunc else ''} hex={hx}{'...' if trunc else ''}",
             flush=True,
         )

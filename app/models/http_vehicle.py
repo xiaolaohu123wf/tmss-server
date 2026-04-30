@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class VehicleCreate(BaseModel):
@@ -14,6 +14,12 @@ class VehicleCreate(BaseModel):
     driver_name: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = None
 
+    @model_validator(mode="after")
+    def passenger_car_clears_load(self) -> VehicleCreate:
+        if (self.vehicle_type or "").strip() == "passenger_car":
+            self.load_capacity = None
+        return self
+
 
 class VehicleUpdate(BaseModel):
     license_plate: Optional[str] = Field(default=None, max_length=20)
@@ -21,7 +27,13 @@ class VehicleUpdate(BaseModel):
     load_capacity: Optional[Decimal] = None
     fleet_id: Optional[int] = None
     driver_name: Optional[str] = Field(default=None, max_length=50)
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def passenger_car_clears_load(self) -> VehicleUpdate:
+        if self.vehicle_type is not None and self.vehicle_type.strip() == "passenger_car":
+            self.load_capacity = None
+        return self
 
 
 class VehicleResponse(BaseModel):
