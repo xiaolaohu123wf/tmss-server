@@ -199,11 +199,14 @@ async def update_device_metadata(
 @router.delete("/{device_id}")
 async def delete_device(
     device_id: int,
-    session: SessionData = Depends(require_manager),
+    _session: SessionData = Depends(require_manager),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
     row = await _repo.find_by_id(conn, device_id)
     if row is None:
         raise NotFoundError("设备不存在")
+    await _repo.unbind(conn, device_id)
+    await device_registry.update_binding(device_id, None, None)
+    await device_registry.unregister(device_id)
     await _repo.soft_delete(conn, device_id)
     return ok({"message": "已删除"})

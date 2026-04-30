@@ -38,13 +38,20 @@ class FullStateHandler:
         packet: FullStatePacket,
         conn: asyncpg.Connection,  # type: ignore[type-arg]
     ) -> None:
-        # 更新固件/ICCID（firmware_version 必须非空才能调用，iccid 通过 COALESCE 更新）
+        # 全量包中的 ICCID：仅当库内为空或为占位（na 等）时补全（设备字段 ic → packet.iccid）
+        iccid_val = (packet.iccid or "").strip()
+        if iccid_val:
+            patched = await _device_repo.patch_iccid_if_empty(conn, state.device_id, iccid_val)
+            if patched:
+                await logger.adebug("device_iccid_patched", device_id=state.device_id)
+
+        # 固件版本（有则更新；ICCID 改由 patch_iccid_if_empty 按需补全，避免覆盖已有卡号）
         if packet.firmware_version:
             await _device_repo.update_firmware(
                 conn,
                 device_id=state.device_id,
                 firmware_version=packet.firmware_version,
-                iccid=packet.iccid,
+                iccid=None,
             )
 
         # LBS 或 GPS 定位点（全量包优先使用 GPS，降级到 LBS）

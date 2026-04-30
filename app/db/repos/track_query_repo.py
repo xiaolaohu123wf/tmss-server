@@ -20,12 +20,21 @@ _SEGMENT_LIST_SQL = """
         ts.end_lng,
         ts.point_count,
         lp_end.lat AS last_lat,
-        lp_end.lng AS last_lng
+        lp_end.lng AS last_lng,
+        COALESCE(lp_start.loc_type::text, 'gps') AS start_loc_type,
+        COALESCE(lp_end.loc_type::text, 'gps') AS end_loc_type
     FROM track_segment ts
     LEFT JOIN vehicle v
         ON v.id = ts.vehicle_id AND v.deleted_at IS NULL
     LEFT JOIN LATERAL (
-        SELECT lat, lng
+        SELECT loc_type
+        FROM location_point
+        WHERE segment_id = ts.id
+        ORDER BY recorded_at ASC, id ASC
+        LIMIT 1
+    ) lp_start ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT lat, lng, loc_type
         FROM location_point
         WHERE segment_id = ts.id
         ORDER BY recorded_at DESC, id DESC
@@ -111,6 +120,8 @@ class TrackSegmentListRow:
     point_count: int
     last_lat: Optional[float]
     last_lng: Optional[float]
+    start_loc_type: str
+    end_loc_type: str
 
 
 @dataclass(frozen=True)
@@ -158,6 +169,8 @@ class TrackQueryRepo:
                     point_count=int(r["point_count"]),
                     last_lat=float(r["last_lat"]) if r["last_lat"] is not None else None,
                     last_lng=float(r["last_lng"]) if r["last_lng"] is not None else None,
+                    start_loc_type=str(r["start_loc_type"] or "gps"),
+                    end_loc_type=str(r["end_loc_type"] or "gps"),
                 )
             )
         return out
@@ -189,3 +202,11 @@ class TrackQueryRepo:
             )
             for r in rows
         ]
+
+    async def delete_segment(self, conn: asyncpg.Connection, segment_id: int) -> bool:  # type: ignore[type-arg]
+        """删除轨迹段及其下属定位点（管理员）。"""
+        async with conn.transaction():
+            await conn.execute("DELETE FROM location_point WHERE segment_id = $1", segment_id)
+            status = await conn.execute("DELETE FROM track_segment WHERE id = $1", segment_id)
+        parts = status.split()
+        return len(parts) >= 2 and parts[0] == "DELETE" and int(parts[1]) > 0

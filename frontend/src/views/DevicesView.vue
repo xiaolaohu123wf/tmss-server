@@ -3,11 +3,13 @@ defineOptions({ name: 'DevicesView' })
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
 import { devicesApi } from '@/api/devices'
 import DeviceStatusTag from '@/components/DeviceStatusTag.vue'
 import type { Device } from '@/types'
 import { chinaTimeZoneLabel, formatChinaDateTimeSplit } from '@/utils/datetime'
 
+const authStore = useAuthStore()
 const devices = ref<Device[]>([])
 const loading = ref(false)
 
@@ -116,6 +118,22 @@ async function handleUnbind(device: Device) {
   ElMessage.success('已解绑')
   await loadData()
 }
+
+async function handleDelete(device: Device) {
+  await ElMessageBox.confirm(
+    `确认删除设备「${device.imei}」？删除后设备记录不再显示，历史定位等数据仍保留；同一 IMEI 再次连接将自动新建设备。`,
+    '删除设备',
+    {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    },
+  )
+  await devicesApi.delete(device.id)
+  ElMessage.success('设备已删除')
+  await loadData()
+}
 </script>
 
 <template>
@@ -192,7 +210,7 @@ async function handleUnbind(device: Device) {
           <el-tag v-else type="info" size="small">未绑定</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="168" fixed="right">
+      <el-table-column label="操作" width="232" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="primary" :disabled="!row.online" @click="openCommand(row)">
@@ -200,6 +218,9 @@ async function handleUnbind(device: Device) {
           </el-button>
           <el-button v-if="row.vehicle_id" link type="warning" @click="handleUnbind(row)">
             解绑
+          </el-button>
+          <el-button v-if="authStore.isManager" link type="danger" @click="handleDelete(row)">
+            删除
           </el-button>
         </template>
       </el-table-column>

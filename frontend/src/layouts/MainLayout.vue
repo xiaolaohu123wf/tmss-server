@@ -55,7 +55,7 @@ const roleLabel = computed(() => {
 })
 
 async function handleLogout() {
-  await ElMessageBox.confirm('确认退出登录？', '提示', { type: 'warning' })
+  await ElMessageBox.confirm('确认退出登录？', '提示', { type: 'warning', lockScroll: false })
   await auth.logout()
   router.push('/login')
 }
@@ -219,5 +219,6 @@ async function handleLogout() {
   overflow-y: auto;
   padding: 20px;
   flex: 1;
+  scrollbar-gutter: stable;
 }
 </style>

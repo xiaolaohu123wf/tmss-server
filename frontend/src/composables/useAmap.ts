@@ -28,7 +28,13 @@ interface AMapInstance {
   setCenter(position: [number, number]): void
   setZoom(zoom: number): void
   clearMap(): void
-  setFitView(overlays?: unknown[]): void
+  /** immediately=true 时取消视野过渡动画，避免 1～2s 的飞入效果 */
+  setFitView(
+    overlays?: unknown[],
+    immediately?: boolean,
+    avoid?: number[] | null,
+    maxZoom?: number,
+  ): void
   setLayers(layers: unknown[]): void
 }
 

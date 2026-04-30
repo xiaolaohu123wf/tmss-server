@@ -1,5 +1,6 @@
-import { get } from './index'
+import { get, del } from './index'
 
+/** 列表项内 start_/end_ lat/lng 为 GCJ-02（高德地图） */
 export interface TrackSegment {
   id: number
   vehicle_id: number | null
@@ -16,6 +17,7 @@ export interface TrackSegment {
   end_lng: number | null
 }
 
+/** 轨迹点 lat/lng 为 GCJ-02（高德地图） */
 export interface TrackPoint {
   recorded_at: string
   lat: number
@@ -49,4 +51,7 @@ export const tracksApi = {
     get<TrackPoint[]>(
       q(`/track-segments/${segmentId}/points`, { limit }),
     ),
+
+  /** 管理员：删除轨迹段及下属定位点 */
+  delete: (segmentId: number) => del<null>(`/track-segments/${segmentId}`),
 }

@@ -53,6 +53,18 @@ UPDATE_DEVICE_FIRMWARE_SQL = """
     WHERE id = $1
 """
 
+PATCH_ICCID_IF_EMPTY_SQL = """
+    UPDATE device
+    SET iccid = $2
+    WHERE id = $1
+      AND deleted_at IS NULL
+      AND (
+          iccid IS NULL
+          OR btrim(iccid::text) = ''
+          OR lower(btrim(iccid::text)) IN ('na', 'n/a', '--')
+      )
+"""
+
 SOFT_DELETE_DEVICE_SQL = """
     UPDATE device
     SET deleted_at = NOW()

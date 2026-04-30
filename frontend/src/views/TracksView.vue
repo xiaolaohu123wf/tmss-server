@@ -1,18 +1,36 @@
 <script setup lang="ts">
 defineOptions({ name: 'TracksView' })
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { useAmap } from '@/composables/useAmap'
 import { formatChinaDateTime } from '@/utils/datetime'
 import { tracksApi, type TrackSegment, type TrackPoint } from '@/api/tracks'
 import { vehiclesApi } from '@/api/vehicles'
+import { useAuthStore } from '@/stores/auth'
 import type { Vehicle } from '@/types'
 
 dayjs.extend(utc)
 
-/** 列表行：展示用起止地点（围栏名或逆地理） */
+const authStore = useAuthStore()
+
+/** 与渐进逆地理编码代数对齐：查询或切换行时作废旧任务，避免表格批量刷新抢主线程 */
+let geocodeGeneration = 0
+
+function bumpGeocodeGeneration(): void {
+  geocodeGeneration += 1
+}
+
+function idleYield(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => resolve(), { timeout: 720 })
+    } else {
+      requestAnimationFrame(() => resolve())
+    }
+  })
+}
 interface TrackRow extends TrackSegment {
   start_place: string
   end_place: string
@@ -29,11 +47,20 @@ const dateRange = ref<[string, string]>([
 ])
 
 const selectedId = ref<number | null>(null)
-const points = ref<TrackPoint[]>([])
+/** 大量轨迹点不做深度响应式，减轻播放/滑块时的 Vue 开销 */
+const points = shallowRef<TrackPoint[]>([])
 const playIndex = ref(0)
 const playing = ref(false)
 const playbackRate = ref(1)
 let playTimer: ReturnType<typeof setInterval> | null = null
+
+/** 进度条下方文案用独立 ref，避免模板每次访问 points[playIndex] 触发大范围 diff */
+const playbackMetaTime = ref('')
+const playbackMetaSpeed = ref('—')
+
+/** 轨迹加载结束后，右侧地图+播放区固定 300ms 显现（与 transition 一致） */
+const TRACK_REVEAL_MS = 300
+const trackStageRevealed = ref(true)
 
 const { map, init, createPolyline, createMarker } = useAmap('tracks-map', {
   zoom: 13,
@@ -99,36 +126,71 @@ async function enrichRowPlaces(r: TrackSegment): Promise<TrackRow> {
   return { ...r, start_place, end_place }
 }
 
-async function enrichBatch(rows: TrackSegment[]): Promise<TrackRow[]> {
-  const out: TrackRow[] = []
-  const batch = 6
-  for (let i = 0; i < rows.length; i += batch) {
-    const chunk = rows.slice(i, i + batch)
-    const done = await Promise.all(chunk.map((r) => enrichRowPlaces(r)))
-    out.push(...done)
+/** 地图折线抽稀：保持首尾与均匀采样，减少高德基线顶点数 */
+const MAX_POLYLINE_VERTICES = 480
+
+function lngLatPathForMap(pts: TrackPoint[]): [number, number][] {
+  if (pts.length <= MAX_POLYLINE_VERTICES) {
+    return pts.map((p) => [Number(p.lng), Number(p.lat)])
   }
+  const out: [number, number][] = []
+  const step = (pts.length - 1) / (MAX_POLYLINE_VERTICES - 1)
+  for (let i = 0; i < MAX_POLYLINE_VERTICES - 1; i++) {
+    const p = pts[Math.min(pts.length - 1, Math.round(i * step))]
+    out.push([Number(p.lng), Number(p.lat)])
+  }
+  const last = pts[pts.length - 1]
+  out.push([Number(last.lng), Number(last.lat)])
   return out
+}
+
+/** 在已有占位行上分批逆地理；代数不一致时立即停止，把主线程让给地图 */
+async function runProgressiveGeocode(data: TrackSegment[], runId: number) {
+  if (!data.length) return
+  const rowMap = new Map<number, TrackRow>(tableRows.value.map((r) => [r.id, r]))
+  const batch = 5
+  for (let i = 0; i < data.length; i += batch) {
+    if (runId !== geocodeGeneration) return
+    const chunk = data.slice(i, i + batch)
+    const done = await Promise.all(chunk.map((r) => enrichRowPlaces(r)))
+    if (runId !== geocodeGeneration) return
+    for (const row of done) rowMap.set(row.id, row)
+    tableRows.value = data.map((r) => rowMap.get(r.id)!)
+    await idleYield()
+  }
 }
 
 async function fetchList() {
   loading.value = true
+  bumpGeocodeGeneration()
+  const geocodeRunId = geocodeGeneration
+  let data: TrackSegment[] = []
   try {
-    const data = await tracksApi.list({
+    data = await tracksApi.list({
       from: dayjs(dateRange.value[0]).utc().format(),
       to: dayjs(dateRange.value[1]).utc().format(),
       vehicle_id: vehicleFilter.value,
       limit: 200,
     })
     await loadGeocoder().catch(() => {})
-    tableRows.value = await enrichBatch(data)
     selectedId.value = null
     clearTrackOverlays()
     points.value = []
+    playbackMetaTime.value = ''
+    playbackMetaSpeed.value = '—'
+    trackStageRevealed.value = true
+    tableRows.value = data.map((r) => ({
+      ...r,
+      start_place: r.start_zone_name || '—',
+      end_place: r.end_zone_name || '—',
+    }))
   } catch {
     ElMessage.error('加载轨迹列表失败')
+    tableRows.value = []
   } finally {
     loading.value = false
   }
+  if (data.length && geocodeRunId === geocodeGeneration) void runProgressiveGeocode(data, geocodeRunId)
 }
 
 function clearTrackOverlays() {
@@ -136,10 +198,20 @@ function clearTrackOverlays() {
   polyline = null
   playMarker?.setMap(null)
   playMarker = null
+  playbackMetaTime.value = ''
+  playbackMetaSpeed.value = '—'
 }
 
-async function onRowClick(row: TrackRow) {
+async function onRowClick(row: TrackRow, _col: unknown, evt: Event) {
+  // Element Plus 的 row-click 在点击子元素（按钮）时仍会触发；
+  // 凡是命中 button / .el-button 的点击一律忽略，交由按钮自身的处理函数。
+  if ((evt?.target as HTMLElement | null)?.closest('button, .el-button')) return
+
+  bumpGeocodeGeneration()
   selectedId.value = row.id
+  trackStageRevealed.value = false
+  clearTrackOverlays()
+  points.value = []
   pointsLoading.value = true
   playing.value = false
   stopPlayTimer()
@@ -152,9 +224,51 @@ async function onRowClick(row: TrackRow) {
   } catch {
     ElMessage.error('加载轨迹点失败')
     points.value = []
+    clearTrackOverlays()
   } finally {
     pointsLoading.value = false
   }
+  await nextTick()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      trackStageRevealed.value = true
+    })
+  })
+}
+
+async function handleDeleteSegment(row: TrackRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除该轨迹段？车牌 ${row.license_plate ?? row.id}，下属定位点将一并删除且不可恢复。`,
+      '删除轨迹',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+        lockScroll: false,
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await tracksApi.delete(row.id)
+    ElMessage.success('已删除')
+  } catch {
+    return
+  }
+  bumpGeocodeGeneration()
+  if (selectedId.value === row.id) {
+    selectedId.value = null
+    clearTrackOverlays()
+    points.value = []
+    playIndex.value = 0
+    playing.value = false
+    stopPlayTimer()
+    trackStageRevealed.value = true
+  }
+  tableRows.value = tableRows.value.filter((r) => r.id !== row.id)
 }
 
 function drawTrack() {
@@ -163,7 +277,7 @@ function drawTrack() {
     return
   }
   clearTrackOverlays()
-  const path: [number, number][] = points.value.map((p) => [p.lng, p.lat])
+  const path = lngLatPathForMap(points.value)
   polyline = createPolyline(path, '#1890ff', 5)
   const p0 = points.value[0]
   playMarker = createMarker(
@@ -175,7 +289,14 @@ function drawTrack() {
     content: '<span style="font-size:12px;font-weight:600">▶</span>',
     direction: 'top',
   })
-  map.value.setFitView?.([polyline as unknown as object, playMarker as unknown as object])
+  const pl = polyline
+  const mk = playMarker
+  requestAnimationFrame(() => {
+    if (map.value && pl && mk) {
+      // 第二参数 true：立即适配视野，禁用高德默认的飞入动画（否则常持续 1～3s）
+      map.value.setFitView?.([pl as unknown as object, mk as unknown as object], true, null, 18)
+    }
+  })
   updateMarkerPos()
 }
 
@@ -184,6 +305,8 @@ function updateMarkerPos() {
   const i = Math.min(Math.max(0, playIndex.value), points.value.length - 1)
   const p = points.value[i]
   playMarker.setPosition([p.lng, p.lat])
+  playbackMetaTime.value = formatChinaDateTime(p.recorded_at)
+  playbackMetaSpeed.value = p.speed != null ? String(p.speed) : '—'
 }
 
 const sliderMax = computed(() => Math.max(0, points.value.length - 1))
@@ -310,46 +433,67 @@ onUnmounted(() => {
           <el-table-column prop="cargo_name" label="货品" width="72">
             <template #default>—</template>
           </el-table-column>
+          <el-table-column v-if="authStore.isManager" label="操作" width="72" fixed="right" align="center">
+            <template #default="{ row }">
+              <el-button link type="danger" size="small" @click.stop="() => handleDeleteSegment(row)">
+                删除
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-aside>
 
       <el-main class="tracks-main">
-        <div id="tracks-map" class="tracks-map" />
-        <div class="playback-bar" v-loading="pointsLoading">
-          <div class="pb-row">
-            <el-button
-              type="primary"
-              :disabled="!points.length"
-              @click="togglePlay"
-            >
-              {{ playing ? '暂停' : '播放' }}
-            </el-button>
-            <span class="pb-label">进度</span>
-            <el-slider
-              v-model="playIndex"
-              :min="0"
-              :max="sliderMax || 0"
-              :disabled="!points.length"
-              :format-tooltip="(v: number) => (points[v] ? formatChinaDateTime(points[v].recorded_at) : '')"
-              style="flex: 1; margin: 0 12px"
-            />
-            <span class="pb-label">倍速</span>
-            <el-select v-model="playbackRate" style="width: 96px" :disabled="!points.length">
-              <el-option label="0.5×" :value="0.5" />
-              <el-option label="1×" :value="1" />
-              <el-option label="2×" :value="2" />
-              <el-option label="4×" :value="4" />
-            </el-select>
+        <div
+          class="tracks-stage"
+          v-loading="pointsLoading"
+          element-loading-text="加载轨迹数据…"
+          element-loading-background="rgba(255,255,255,0.88)"
+        >
+          <div
+            class="tracks-stage-inner"
+            :class="{ 'tracks-stage-inner--in': trackStageRevealed }"
+            :style="{ transitionDuration: `${TRACK_REVEAL_MS}ms` }"
+          >
+            <div id="tracks-map" class="tracks-map" />
+            <div class="playback-bar">
+              <div class="pb-row">
+                <el-button
+                  type="primary"
+                  :disabled="!points.length"
+                  @click="togglePlay"
+                >
+                  {{ playing ? '暂停' : '播放' }}
+                </el-button>
+                <span class="pb-label">进度</span>
+                <el-slider
+                  v-model="playIndex"
+                  :min="0"
+                  :max="sliderMax || 0"
+                  :disabled="!points.length"
+                  :show-tooltip="false"
+                  :format-tooltip="(v: number) => (points[v] ? formatChinaDateTime(points[v].recorded_at) : '')"
+                  style="flex: 1; margin: 0 12px"
+                />
+                <span class="pb-label">倍速</span>
+                <el-select v-model="playbackRate" style="width: 96px" :disabled="!points.length">
+                  <el-option label="0.5×" :value="0.5" />
+                  <el-option label="1×" :value="1" />
+                  <el-option label="2×" :value="2" />
+                  <el-option label="4×" :value="4" />
+                </el-select>
+              </div>
+              <div v-if="points.length" class="pb-meta muted">
+                点数 {{ points.length }} · 当前 {{ playIndex + 1 }} / {{ points.length }}
+                <template v-if="playbackMetaTime">
+                  · {{ playbackMetaTime }}
+                  · 速度 {{ playbackMetaSpeed }} km/h
+                </template>
+              </div>
+              <div v-else-if="selectedId" class="pb-meta muted">该段无轨迹点</div>
+              <div v-else class="pb-meta muted">点击左侧表格一行加载轨迹</div>
+            </div>
           </div>
-          <div v-if="points.length" class="pb-meta muted">
-            点数 {{ points.length }} · 当前 {{ playIndex + 1 }} / {{ points.length }}
-            <template v-if="points[playIndex]">
-              · {{ formatChinaDateTime(points[playIndex].recorded_at) }}
-              · 速度 {{ points[playIndex].speed ?? '—' }} km/h
-            </template>
-          </div>
-          <div v-else-if="selectedId" class="pb-meta muted">该段无轨迹点</div>
-          <div v-else class="pb-meta muted">点击左侧表格一行加载轨迹</div>
         </div>
       </el-main>
     </el-container>
@@ -384,6 +528,27 @@ onUnmounted(() => {
   padding: 0 !important;
   display: flex;
   flex-direction: column;
+}
+.tracks-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tracks-stage-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+  transition-property: opacity;
+  transition-timing-function: ease;
+}
+.tracks-stage-inner--in {
+  opacity: 1;
 }
 .tracks-map {
   flex: 1;

@@ -12,9 +12,9 @@ from app.core.enums import UserRole
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.db.deps import get_db_conn
 from app.db.repos.track_query_repo import TrackQueryRepo
-from app.http.deps import require_fleet_or_above
+from app.http.deps import require_fleet_or_above, require_manager
 from app.http.response import ok
-from app.services.geofence_service import get_zones_at
+from app.services.geofence_service import get_zones_at, wgs84_to_gcj02
 
 router = APIRouter(prefix="/api/track-segments", tags=["track-segments"])
 _repo = TrackQueryRepo()
@@ -63,6 +63,8 @@ async def _ensure_segment_access(
 
 
 class TrackSegmentListItem(BaseModel):
+    """起终点坐标为 GCJ-02，与高德一致；围栏命中仍用库内 WGS 判定（见 _zone_label）。"""
+
     id: int
     vehicle_id: Optional[int]
     license_plate: Optional[str]
@@ -79,11 +81,20 @@ class TrackSegmentListItem(BaseModel):
 
 
 class TrackPointItem(BaseModel):
+    """单点坐标为 GCJ-02（火星坐标），与高德地图底图一致。"""
+
     recorded_at: str
     lat: float
     lng: float
     speed: Optional[float]
     loc_type: str
+
+
+def _to_amap_latlng(lat: float, lng: float, loc_type: str) -> tuple[float, float]:
+    """库内为设备原始坐标：GPS=WGS-84；LBS 在国内多为 GCJ-02，不再二次偏移。"""
+    if loc_type == "lbs":
+        return lat, lng
+    return wgs84_to_gcj02(lat, lng)
 
 
 @router.get("")
@@ -124,6 +135,16 @@ async def list_track_segments(
         start_zone = await _zone_label(conn, s_lat, s_lng)
         end_zone = await _zone_label(conn, e_lat, e_lng)
 
+        map_s_lat, map_s_lng = (
+            _to_amap_latlng(s_lat, s_lng, r.start_loc_type)
+            if s_lat is not None and s_lng is not None
+            else (None, None)
+        )
+        map_e_lat, map_e_lng = (
+            _to_amap_latlng(e_lat, e_lng, r.end_loc_type)
+            if e_lat is not None and e_lng is not None
+            else (None, None)
+        )
         item = TrackSegmentListItem(
             id=r.id,
             vehicle_id=r.vehicle_id,
@@ -134,10 +155,10 @@ async def list_track_segments(
             start_zone_name=start_zone,
             end_zone_name=end_zone,
             cargo_name=None,
-            start_lat=s_lat,
-            start_lng=s_lng,
-            end_lat=e_lat,
-            end_lng=e_lng,
+            start_lat=map_s_lat,
+            start_lng=map_s_lng,
+            end_lat=map_e_lat,
+            end_lng=map_e_lng,
         )
         items.append(item.model_dump())
 
@@ -153,14 +174,33 @@ async def get_segment_points(
 ) -> dict:
     await _ensure_segment_access(conn, segment_id, session)
     pts = await _repo.list_points(conn, segment_id, max_points=limit)
-    data = [
-        TrackPointItem(
-            recorded_at=p.recorded_at.isoformat(),
-            lat=p.lat,
-            lng=p.lng,
-            speed=p.speed,
-            loc_type=p.loc_type,
-        ).model_dump()
-        for p in pts
-    ]
+    data = []
+    for p in pts:
+        mlat, mlng = _to_amap_latlng(p.lat, p.lng, p.loc_type)
+        data.append(
+            TrackPointItem(
+                recorded_at=p.recorded_at.isoformat(),
+                lat=mlat,
+                lng=mlng,
+                speed=p.speed,
+                loc_type=p.loc_type,
+            ).model_dump()
+        )
     return ok(data)
+
+
+@router.delete("/{segment_id}")
+async def delete_track_segment(
+    segment_id: int,
+    _session: SessionData = Depends(require_manager),
+    conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
+) -> dict:
+    """管理员删除历史轨迹段及所有定位点。"""
+    # 经理可查全部；删除前校验段存在（避免误删）
+    row = await conn.fetchrow("SELECT 1 FROM track_segment WHERE id = $1", segment_id)
+    if row is None:
+        raise NotFoundError("轨迹段不存在")
+    deleted = await _repo.delete_segment(conn, segment_id)
+    if not deleted:
+        raise NotFoundError("轨迹段不存在")
+    return ok(None)

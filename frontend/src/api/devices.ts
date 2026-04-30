@@ -1,4 +1,4 @@
-import { get, post, put } from './index'
+import { get, post, put, del } from './index'
 import type { Device, DeviceCreate } from '@/types'
 
 export const devicesApi = {
@@ -23,4 +23,7 @@ export const devicesApi = {
       message: string
       speed_kmh_recorded: number | null
     }>(`/devices/${deviceId}/command`, { command }),
+
+  /** 管理员：软删除设备 */
+  delete: (deviceId: number) => del<{ message: string }>(`/devices/${deviceId}`),
 }

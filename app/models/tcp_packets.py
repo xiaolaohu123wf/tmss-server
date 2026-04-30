@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class RegisterPacket(BaseModel):
@@ -26,12 +26,24 @@ class GpsPacket(BaseModel):
 
 
 class FullStatePacket(BaseModel):
-    """低频全量状态包（10~150 秒一次）。"""
+    """低频全量状态包（10~150 秒一次）。设备短字段：ic/q/vb/dt 与 Lua 全量包一致。"""
     imei: str
-    report_time: Optional[str] = Field(default=None, alias="reportTime")
-    signal_strength: Optional[int] = Field(default=None, alias="signalStrength")
-    iccid: Optional[str] = None
-    battery_voltage: Optional[float] = Field(default=None, alias="batteryVoltage")
+    report_time: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("reportTime", "dt"),
+    )
+    signal_strength: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("signalStrength", "q"),
+    )
+    iccid: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("iccid", "ic"),
+    )
+    battery_voltage: Optional[float] = Field(
+        default=None,
+        validation_alias=AliasChoices("batteryVoltage", "vb"),
+    )
     firmware_version: Optional[str] = Field(default=None, alias="firmwareVersion")
     gps: Optional[dict[str, Any]] = None
     lbs: Optional[dict[str, Any]] = None

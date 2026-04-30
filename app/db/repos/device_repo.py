@@ -9,6 +9,7 @@ import asyncpg
 from app.db.queries.device import (
     INSERT_BIND_SQL,
     INSERT_DEVICE_SQL,
+    PATCH_ICCID_IF_EMPTY_SQL,
     SELECT_ACTIVE_BIND_BY_DEVICE_SQL,
     SELECT_ACTIVE_BIND_BY_VEHICLE_SQL,
     SELECT_ALL_DEVICES_SQL,
@@ -113,6 +114,19 @@ class DeviceRepo:
         iccid: Optional[str] = None,
     ) -> None:
         await conn.execute(UPDATE_DEVICE_FIRMWARE_SQL, device_id, firmware_version, iccid)
+
+    async def patch_iccid_if_empty(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        device_id: int,
+        iccid: str,
+    ) -> bool:
+        """ICCID 为空或占位（na 等）时写入设备上报的卡号。"""
+        v = iccid.strip()
+        if not v:
+            return False
+        status = await conn.execute(PATCH_ICCID_IF_EMPTY_SQL, device_id, v)
+        return status.endswith(" 1")
 
     async def update_metadata(
         self,
