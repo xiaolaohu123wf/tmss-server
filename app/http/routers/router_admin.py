@@ -15,7 +15,7 @@ from app.db.deps import get_db_conn
 from app.db.repos.business_config_repo import BusinessConfigRepo, BusinessConfigRow
 from app.db.repos.fleet_repo import FleetRepo
 from app.db.repos.user_repo import UserRepo
-from app.http.deps import require_manager, require_password_confirm
+from app.http.deps import require_fleet_or_above, require_manager, require_password_confirm
 from app.http.response import ok
 from app.tcp.connection import invalidate_gps_handler
 
@@ -87,6 +87,29 @@ class FleetCreateResponse(BaseModel):
     name: str
     notes: Optional[str]
     captain: FleetCaptainCredentials
+
+
+_WEATHER_NAMES = ["晴", "多云", "阴", "小雨", "大雨", "雪", "雾", "雷暴"]
+
+
+@router.get("/weather")
+async def get_weather(
+    _session: SessionData = Depends(require_fleet_or_above),
+) -> dict:
+    """返回当前缓存天气（与下发给设备的内容一致），未缓存时返回 null。"""
+    from app.cache.pool import get_redis
+    from app.cache.weather_cache import WeatherCache
+
+    cached = await WeatherCache().get(get_redis())
+    if not cached or ":" not in cached:
+        return ok(None)
+    temp_str, code_str = cached.split(":", 1)
+    try:
+        code = int(code_str)
+    except ValueError:
+        return ok(None)
+    name = _WEATHER_NAMES[code] if 0 <= code < len(_WEATHER_NAMES) else "未知"
+    return ok({"temp": temp_str, "code": code, "name": name})
 
 
 @router.get("/config")

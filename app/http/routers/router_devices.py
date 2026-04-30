@@ -110,11 +110,12 @@ async def bind_device(
         operator=body.operator or session.username,
     )
     fleet_row = await conn.fetchrow(
-        "SELECT fleet_id FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+        "SELECT fleet_id, license_plate FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
         body.vehicle_id,
     )
     fleet_id = fleet_row["fleet_id"] if fleet_row else None
-    await device_registry.update_binding(device_id, body.vehicle_id, fleet_id)
+    license_plate = fleet_row["license_plate"] if fleet_row else None
+    await device_registry.update_binding(device_id, body.vehicle_id, fleet_id, license_plate)
     return ok({"bind_id": bind_id})
 
 

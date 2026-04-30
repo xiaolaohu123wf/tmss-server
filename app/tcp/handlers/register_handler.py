@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Optional
 
 import structlog
+from redis.asyncio import Redis
 
+from app.cache.disconnect_cache import disconnect_cache
 from app.core.device_registry import DeviceRegistry
 from app.core.enums import Command
 from app.core.event_bus import event_bus
@@ -35,7 +37,8 @@ class RegisterHandler:
         self,
         imei: str,
         writer: asyncio.StreamWriter,
-        conn,   # asyncpg.Connection
+        conn,           # asyncpg.Connection
+        redis: Redis,   # 用于断线时长判断
         *,
         skip_greeting: bool = False,
     ) -> Optional[int]:
@@ -44,7 +47,7 @@ class RegisterHandler:
         - 若 IMEI 在 device 表中存在，获取 device_id 及绑定的 vehicle_id/fleet_id
         - 若不存在，自动创建设备记录
         - 在 DeviceRegistry 中注册运行时状态
-        - 仅首次注册（非重连）时下发欢迎语
+        - 欢迎语下发条件：设备当前不在线 AND 离线超过 1 小时（或首次连线）
 
         返回 device_id，失败返回 None。
         """
@@ -54,19 +57,35 @@ class RegisterHandler:
             device_id = await _device_repo.create(conn, imei=imei)
             vehicle_id = None
             fleet_id = None
-            is_first_registration = True
             await logger.ainfo("device_auto_created", imei=imei, device_id=device_id)
         else:
             device_id = row.id
-            # 查询当前绑定
+            # 查询当前绑定及车牌
             bind = await _device_repo.get_active_bind_by_device(conn, device_id)
             vehicle_id = bind.vehicle_id if bind else None
             fleet_id = await _get_fleet_id(conn, vehicle_id)
-            is_first_registration = False
 
-        # 检查是否已在线（重连），若是则不重复下发欢迎语
+        license_plate: Optional[str] = None
+        if vehicle_id is not None:
+            v_row = await conn.fetchrow(
+                "SELECT license_plate FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+                vehicle_id,
+            )
+            if v_row:
+                license_plate = v_row["license_plate"]
+
+        # 欢迎语判断：
+        #   - 设备当前已在线（registry 已有记录）→ 不欢迎（TCP 内部重连）
+        #   - 设备当前不在线 + 断线不足 1h → 不欢迎（短暂掉线）
+        #   - 设备当前不在线 + 离线超 1h / 首次上线 → 欢迎
         existing = await self._registry.get(device_id)
-        should_greet = existing is None  # 全新上线才欢迎
+        if existing is not None:
+            should_greet = False
+        else:
+            recently_offline = await disconnect_cache.was_recently_disconnected(
+                redis, device_id
+            )
+            should_greet = not recently_offline
 
         await self._registry.register(
             device_id=device_id,
@@ -74,6 +93,7 @@ class RegisterHandler:
             writer=writer,
             vehicle_id=vehicle_id,
             fleet_id=fleet_id,
+            license_plate=license_plate,
         )
 
         if should_greet and not skip_greeting:

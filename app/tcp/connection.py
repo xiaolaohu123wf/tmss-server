@@ -5,6 +5,8 @@ from typing import Optional
 
 import structlog
 
+from app.cache.disconnect_cache import disconnect_cache
+from app.cache.pool import get_redis
 from app.core.device_registry import device_registry
 from app.core.event_bus import event_bus
 from app.db.pool import get_pool
@@ -169,6 +171,9 @@ class ConnectionHandler:
 
         # GPS 定位包（高频简包）
         if msg_type in ("gps", "lbs") and "lat" in parsed:
+            # 未注册但帧内携带 imei → 先完成隐式注册，再处理本帧定位
+            if self._device_id is None and parsed.get("imei"):
+                await self._handle_register({"imei": parsed["imei"]}, raw)
             await self._handle_gps(parsed)
             return
 
@@ -197,6 +202,7 @@ class ConnectionHandler:
                 imei,
                 self._writer,
                 conn,
+                get_redis(),
                 skip_greeting=login_ack,
             )
 
@@ -256,6 +262,11 @@ class ConnectionHandler:
 
     async def _cleanup(self) -> None:
         if self._device_id is not None:
+            # 记录断线时间戳（TTL 1h），用于注册时判断是否需要重发欢迎语
+            try:
+                await disconnect_cache.record(get_redis(), self._device_id)
+            except Exception:
+                pass
             # 断线前先关闭开放的轨迹段（以最后已知点为结束点）
             await self._close_open_segment_on_disconnect()
             await event_bus.publish("device_state", {

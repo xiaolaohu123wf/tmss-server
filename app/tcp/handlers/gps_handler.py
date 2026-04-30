@@ -129,6 +129,11 @@ class GpsHandler:
         )
 
         for alert in alert_result.alerts:
+            # 组装附加信息：与手动下发事件保持 source 字段一致，便于前端统一展示
+            detail: dict = {"source": "auto", "command": alert.command.value}
+            if alert.ban_id is not None:
+                detail["ban_id"] = alert.ban_id
+
             # 先写事件，拿到 event_id 再记 command_log
             event_id = await _event_repo.insert(
                 conn,
@@ -141,6 +146,7 @@ class GpsHandler:
                 lng=packet.lng,
                 speed=alert.speed,
                 cmd_sent=alert.command.value,
+                detail=detail,
             )
             await command_service.send(
                 device_id=state.device_id,
@@ -186,6 +192,7 @@ class GpsHandler:
             "event": "location",
             "device_id": state.device_id,
             "vehicle_id": state.vehicle_id,
+            "license_plate": state.license_plate,
             "lat": packet.lat,
             "lng": packet.lng,
             "speed": packet.speed,

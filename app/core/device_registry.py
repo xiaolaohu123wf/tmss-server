@@ -26,6 +26,7 @@ class DeviceState:
     writer: asyncio.StreamWriter
     last_heartbeat_at: datetime
     connected_at: datetime
+    license_plate: Optional[str] = None
     recent_points: deque = field(default_factory=lambda: deque(maxlen=RECENT_POINTS_BUF))
     current_work_state: WorkState = WorkState.UNKNOWN
     active_zone_ids: set = field(default_factory=set)
@@ -56,6 +57,7 @@ class DeviceRegistry:
         writer: asyncio.StreamWriter,
         vehicle_id: Optional[int] = None,
         fleet_id: Optional[int] = None,
+        license_plate: Optional[str] = None,
     ) -> DeviceState:
         async with self._lock:
             now = datetime.utcnow()
@@ -64,6 +66,7 @@ class DeviceRegistry:
                 imei=imei,
                 vehicle_id=vehicle_id,
                 fleet_id=fleet_id,
+                license_plate=license_plate,
                 writer=writer,
                 last_heartbeat_at=now,
                 connected_at=now,
@@ -111,6 +114,7 @@ class DeviceRegistry:
         device_id: int,
         vehicle_id: Optional[int],
         fleet_id: Optional[int],
+        license_plate: Optional[str] = None,
     ) -> bool:
         """绑定/解绑后刷新内存状态，若设备不在线则返回 False。"""
         state = self._devices.get(device_id)
@@ -118,6 +122,7 @@ class DeviceRegistry:
             return False
         state.vehicle_id = vehicle_id
         state.fleet_id = fleet_id
+        state.license_plate = license_plate
         await logger.ainfo(
             "device_binding_updated",
             device_id=device_id,

@@ -28,6 +28,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 首次启动：若无管理员账号，自动创建 admin/admin123
     await _ensure_default_admin(pool)
 
+    # 清除旧的天气缓存（防止修改映射规则后旧值继续生效）
+    from app.cache.pool import get_redis as _get_redis
+    try:
+        await _get_redis().delete("weather:current")
+    except Exception:
+        pass
+
     # 启动时立即清理一次残留的超时开放段（处理上次意外重启遗留的未关段）
     from app.services.segment_sweeper import close_stale_segments_once, segment_sweeper_loop
     try:

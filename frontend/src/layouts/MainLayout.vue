@@ -1,16 +1,40 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
 import { ElMessageBox } from 'element-plus'
 import TabBar from '@/components/TabBar.vue'
+import { getWeather } from '@/api/weather'
+import type { WeatherData } from '@/api/weather'
 
 const auth = useAuthStore()
 const tabsStore = useTabsStore()
 const route = useRoute()
 const router = useRouter()
 const isCollapse = ref(false)
+
+// ── 天气 ────────────────────────────────────────────────────────
+const weather = ref<WeatherData | null>(null)
+const WEATHER_ICONS: Record<number, string> = {
+  0: '☀️', 1: '⛅', 2: '☁️', 3: '🌦', 4: '🌧', 5: '🌨', 6: '🌫', 7: '⛈',
+}
+const weatherIcon = computed(() =>
+  weather.value !== null ? (WEATHER_ICONS[weather.value.code] ?? '🌡️') : '',
+)
+
+async function fetchWeather() {
+  weather.value = await getWeather()
+}
+
+let weatherTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  fetchWeather()
+  weatherTimer = setInterval(fetchWeather, 10 * 60 * 1000) // 每 10 分钟刷新
+})
+onUnmounted(() => {
+  if (weatherTimer) clearInterval(weatherTimer)
+})
 
 // 监听路由变化，自动将当前页加入标签栏
 watch(
@@ -100,6 +124,13 @@ async function handleLogout() {
       <el-header class="layout-header">
         <div class="header-title">TMSS 车辆监控系统</div>
         <div class="header-right">
+          <!-- 天气小组件 -->
+          <div v-if="weather" class="weather-widget">
+            <span class="weather-icon">{{ weatherIcon }}</span>
+            <span class="weather-temp">{{ weather.temp }}°C</span>
+            <span class="weather-name">{{ weather.name }}</span>
+          </div>
+
           <el-tag :type="auth.isManager ? 'danger' : 'info'" size="small">
             {{ roleLabel }}
           </el-tag>
@@ -220,6 +251,33 @@ async function handleLogout() {
 
 .username {
   font-size: 14px;
+  color: #555;
+}
+
+.weather-widget {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: #f0f7ff;
+  border: 1px solid #d0e8ff;
+  border-radius: 14px;
+  font-size: 13px;
+  color: #1677ff;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.weather-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.weather-temp {
+  font-weight: 600;
+}
+
+.weather-name {
   color: #555;
 }
 

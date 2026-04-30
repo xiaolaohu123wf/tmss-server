@@ -13,22 +13,34 @@ logger = structlog.get_logger()
 
 _CACHE = WeatherCache()
 
-_WEATHER_CODE_MAP = [
-    ({"thunder", "storm", "blizzard"}, 7),
-    ({"snow", "sleet", "ice"}, 5),
-    ({"fog", "mist", "haze"}, 6),
-    ({"heavy rain", "torrential", "pouring"}, 4),
-    ({"rain", "drizzle", "shower"}, 3),
-    ({"overcast"}, 2),
-    ({"partly", "cloudy", "cloud"}, 1),
-]
-
-
+# 注意：wttr.in 春季对长三角地区极频繁返回 "Thundery outbreaks possible" /
+# "Patchy rain with thunder"，这类描述含 "thunder" 但并非真正雷暴。
+# 只有 "thunderstorm" 精确词才映射到 7；其余含 "thunder" 的降级为大雨（4）。
 def _map_weather_code(desc: str) -> int:
     low = desc.lower()
-    for keywords, code in _WEATHER_CODE_MAP:
-        if any(w in low for w in keywords):
-            return code
+    # 7：确认雷暴 / 暴风雪
+    if "thunderstorm" in low or "blizzard" in low:
+        return 7
+    # 5：降雪 / 冻雨 / 冰雹
+    if any(w in low for w in ("snow", "sleet", "ice pellet", "blowing snow")):
+        return 5
+    # 6：雾 / 霾
+    if any(w in low for w in ("fog", "mist", "haze")):
+        return 6
+    # 4：雷阵雨可能（含 thunder 但非 thunderstorm）/ 大雨
+    if "thunder" in low:
+        return 4
+    if any(w in low for w in ("heavy rain", "torrential", "pouring", "heavy shower")):
+        return 4
+    # 3：小雨 / 阵雨 / 毛毛雨
+    if any(w in low for w in ("rain", "drizzle", "shower", "patchy rain")):
+        return 3
+    # 2：阴
+    if "overcast" in low:
+        return 2
+    # 1：多云
+    if any(w in low for w in ("partly", "cloudy", "cloud")):
+        return 1
     return 0  # sunny / clear
 
 
