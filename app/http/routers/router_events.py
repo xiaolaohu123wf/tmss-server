@@ -43,6 +43,7 @@ async def list_events(
             id=r.id,
             device_id=r.device_id,
             vehicle_id=r.vehicle_id,
+            vehicle_license=r.vehicle_license,
             event_type=r.event_type,
             severity=r.severity,
             zone_id=r.zone_id,

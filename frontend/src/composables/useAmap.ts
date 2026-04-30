@@ -13,6 +13,12 @@ declare const AMap: {
   MouseTool: new (map: AMapInstance) => AMapMouseTool
   LngLat: new (lng: number, lat: number) => unknown
   Icon: new (options?: Record<string, unknown>) => unknown
+  TileLayer: {
+    new (options?: Record<string, unknown>): unknown
+    Satellite: new (options?: Record<string, unknown>) => unknown
+    RoadNet: new (options?: Record<string, unknown>) => unknown
+    Traffic: new (options?: Record<string, unknown>) => unknown
+  }
 }
 
 interface AMapInstance {
@@ -23,6 +29,7 @@ interface AMapInstance {
   setZoom(zoom: number): void
   clearMap(): void
   setFitView(overlays?: unknown[]): void
+  setLayers(layers: unknown[]): void
 }
 
 export interface AMapMarker {
@@ -165,6 +172,10 @@ export function useAmap(containerId: string, options?: Record<string, unknown>) 
     map.value = null
   })
 
+  function setLayers(layers: unknown[]) {
+    map.value?.setLayers(layers)
+  }
+
   return {
     map,
     isReady,
@@ -175,5 +186,6 @@ export function useAmap(containerId: string, options?: Record<string, unknown>) 
     updatePolygonColor,
     fitPolygon,
     startDrawPolygon,
+    setLayers,
   }
 }

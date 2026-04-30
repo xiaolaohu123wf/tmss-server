@@ -20,10 +20,11 @@ class CommandLogRepo:
         source: str = "auto",
         operator_id: Optional[int] = None,
         event_id: Optional[int] = None,
+        speed_kmh: Optional[float] = None,
     ) -> int:
         log_id: int = await conn.fetchval(
             INSERT_COMMAND_LOG_SQL,
-            device_id, vehicle_id, cmd, source, operator_id, event_id,
+            device_id, vehicle_id, cmd, source, operator_id, event_id, speed_kmh,
         )
         return log_id
 

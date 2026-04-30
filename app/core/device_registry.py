@@ -10,6 +10,7 @@ import structlog
 
 from app.core.enums import WorkState
 from app.models.tcp_packets import GpsPacket
+from app.tcp.raw_trace import record_tx
 
 logger = structlog.get_logger()
 
@@ -126,6 +127,7 @@ class DeviceRegistry:
         if state is None:
             return False
         try:
+            record_tx(state.writer, cmd)
             state.writer.write(cmd)
             await state.writer.drain()
             return True

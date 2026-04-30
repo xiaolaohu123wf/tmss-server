@@ -14,9 +14,11 @@ from app.db.queries.device import (
     SELECT_ALL_DEVICES_SQL,
     SELECT_DEVICE_BY_ID_SQL,
     SELECT_DEVICE_BY_IMEI_SQL,
+    SELECT_LATEST_LOCATION_PER_DEVICE_SQL,
     SOFT_DELETE_DEVICE_SQL,
     UNBIND_SQL,
     UPDATE_DEVICE_FIRMWARE_SQL,
+    UPDATE_DEVICE_METADATA_SQL,
 )
 
 
@@ -28,6 +30,18 @@ class DeviceRow:
     model: Optional[str]
     firmware_version: Optional[str]
     notes: Optional[str]
+    vehicle_id: Optional[int] = None
+    vehicle_license: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DeviceLatestLocation:
+    device_id: int
+    loc_type: str       # 'gps' | 'lbs'
+    lat: float
+    lng: float
+    recorded_at: datetime
+    speed: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +73,24 @@ class DeviceRepo:
         rows = await conn.fetch(SELECT_ALL_DEVICES_SQL)
         return [_to_device_row(r) for r in rows]
 
+    async def latest_locations(
+        self, conn: asyncpg.Connection, device_ids: list[int]  # type: ignore[type-arg]
+    ) -> list[DeviceLatestLocation]:
+        if not device_ids:
+            return []
+        rows = await conn.fetch(SELECT_LATEST_LOCATION_PER_DEVICE_SQL, device_ids)
+        return [
+            DeviceLatestLocation(
+                device_id=r["device_id"],
+                loc_type=r["loc_type"],
+                lat=float(r["lat"]),
+                lng=float(r["lng"]),
+                recorded_at=r["recorded_at"],
+                speed=float(r["speed"]) if r["speed"] is not None else None,
+            )
+            for r in rows
+        ]
+
     async def create(
         self,
         conn: asyncpg.Connection,  # type: ignore[type-arg]
@@ -81,6 +113,21 @@ class DeviceRepo:
         iccid: Optional[str] = None,
     ) -> None:
         await conn.execute(UPDATE_DEVICE_FIRMWARE_SQL, device_id, firmware_version, iccid)
+
+    async def update_metadata(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        device_id: int,
+        firmware_version: Optional[str] = None,
+        iccid: Optional[str] = None,
+    ) -> None:
+        """编辑设备固件、ICCID（空字符串写入为 NULL）。"""
+        await conn.execute(
+            UPDATE_DEVICE_METADATA_SQL,
+            device_id,
+            firmware_version,
+            iccid,
+        )
 
     async def soft_delete(
         self, conn: asyncpg.Connection, device_id: int  # type: ignore[type-arg]
@@ -124,6 +171,8 @@ def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
         model=row["model"],
         firmware_version=row["firmware_version"],
         notes=row["notes"],
+        vehicle_id=row["vehicle_id"] if "vehicle_id" in row.keys() else None,
+        vehicle_license=row["vehicle_license"] if "vehicle_license" in row.keys() else None,
     )
 
 

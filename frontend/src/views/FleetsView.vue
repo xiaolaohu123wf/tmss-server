@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { fleetsApi } from '@/api/fleets'
 import type { Fleet, FleetCreate } from '@/types'
+import { formatChinaDateTime } from '@/utils/datetime'
 
 const fleets = ref<Fleet[]>([])
 const loading = ref(false)
@@ -72,7 +73,9 @@ async function handleDelete(fleet: Fleet) {
       <el-table-column label="ID" prop="id" width="70" />
       <el-table-column label="车队名称" prop="name" min-width="160" />
       <el-table-column label="备注" prop="notes" min-width="200" />
-      <el-table-column label="创建时间" prop="created_at" width="170" />
+      <el-table-column label="创建时间" width="175">
+        <template #default="{ row }">{{ formatChinaDateTime(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>

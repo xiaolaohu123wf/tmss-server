@@ -34,6 +34,7 @@ class EventType(str, Enum):
     ZONE_EXIT = "zone_exit"
     DEVICE_OFFLINE = "device_offline"
     UNREPORTED_EXIT = "unreported_exit"
+    MANUAL_COMMAND = "manual_command"  # HTTP 手动下发指令
 
 
 class ZoneType(str, Enum):

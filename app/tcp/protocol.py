@@ -34,6 +34,10 @@ def parse_frame(raw: bytes) -> Optional[Union[str, dict, bytes]]:
     if not text:
         return None
 
+    # DTU「HEX 心跳 00」常发两字节 ASCII 0x30,0x30，与单字节 NUL 等同视为心跳
+    if text == "00":
+        return raw
+
     # 纯 ASCII 命令
     lower = text.lower()
     if lower == "rt":
@@ -100,12 +104,33 @@ def split_frames(buf: bytes) -> tuple[list[bytes], bytes]:
     return _extract_json_objects(buf)
 
 
+def _ascii00_followed_by_json_or_end(buf: bytes, j: int, n: int) -> bool:
+    """`00` 之后是否为缓冲末尾或下一个非空白字符为 JSON 起首 `{` `[`。"""
+    while j < n and buf[j : j + 1] in (b" ", b"\t", b"\r"):
+        j += 1
+    return j >= n or buf[j : j + 1] in (b"{", b"[")
+
+
 def _extract_json_objects(buf: bytes) -> tuple[list[bytes], bytes]:
     """从连续字节流中提取完整 JSON 对象（无任何分隔符时使用）。"""
     frames: list[bytes] = []
     i = 0
     n = len(buf)
     while i < n:
+        # 无前导换行时，单字节 NUL / 前缀 "00" 易被下方「跳过非 JSON」逻辑吞掉，须优先成帧
+        if buf[i] == 0:
+            frames.append(b"\x00")
+            i += 1
+            continue
+        if (
+            i + 2 <= n
+            and buf[i : i + 2] == b"00"
+            and _ascii00_followed_by_json_or_end(buf, i + 2, n)
+        ):
+            frames.append(b"00")
+            i += 2
+            continue
+
         # 跳过非 JSON 字符（空格、逗号等）
         while i < n and buf[i:i+1] not in (b"{", b"["):
             i += 1

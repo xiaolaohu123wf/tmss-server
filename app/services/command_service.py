@@ -26,6 +26,7 @@ async def send(
     event_id: Optional[int] = None,
     source: str = "auto",
     operator_id: Optional[int] = None,
+    speed_kmh: Optional[float] = None,
 ) -> bool:
     """
     下发指令并记录日志。
@@ -42,6 +43,7 @@ async def send(
         source=source,
         operator_id=operator_id,
         event_id=event_id,
+        speed_kmh=speed_kmh,
     )
 
     if delivered:

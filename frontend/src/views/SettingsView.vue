@@ -32,6 +32,8 @@ async function loadConfig() {
   try {
     const data = await get<BusinessConfig>('/admin/config')
     config.value = data
+  } catch {
+    /* 拦截器已提示；保留表单默认值，避免 mounted 未捕获的 Promise */
   } finally {
     loading.value = false
   }

@@ -10,6 +10,7 @@ class EventResponse(BaseModel):
     id: int
     device_id: Optional[int]
     vehicle_id: Optional[int]
+    vehicle_license: Optional[str] = None
     event_type: str
     severity: int
     zone_id: Optional[int]
@@ -33,6 +34,17 @@ class DeviceResponse(BaseModel):
     model: Optional[str]
     firmware_version: Optional[str]
     notes: Optional[str]
+    # binding
+    vehicle_id: Optional[int] = None
+    vehicle_license: Optional[str] = None
+    # runtime (from device_registry)
+    online: bool = False
+    last_heartbeat_at: Optional[str] = None
+    # latest location (from DB)
+    last_loc_type: Optional[str] = None   # 'gps' | 'lbs' | None
+    last_lat: Optional[float] = None
+    last_lng: Optional[float] = None
+    last_location_at: Optional[str] = None
 
 
 class DeviceCreate(BaseModel):
@@ -41,6 +53,16 @@ class DeviceCreate(BaseModel):
     model: Optional[str] = None
     firmware_version: Optional[str] = None
     notes: Optional[str] = None
+
+
+class DeviceMetadataUpdate(BaseModel):
+    """设备管理页编辑固件、ICCID"""
+    firmware_version: str = ""
+    iccid: str = ""
+
+
+class CommandRequest(BaseModel):
+    command: str  # must match a Command enum value
 
 
 class BindRequest(BaseModel):

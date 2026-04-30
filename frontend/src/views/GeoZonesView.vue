@@ -21,7 +21,7 @@ const {
   updatePolygonColor,
   fitPolygon,
   startDrawPolygon,
-} = useAmap('geo-zone-map', { zoom: 14 })
+} = useAmap('geo-zone-map', { zoom: 14, center: [109.4753, 30.2832] })
 
 // Map from zone.id to its rendered polygon
 const polygonMap = new Map<number, AMapPolygon>()
@@ -89,9 +89,9 @@ function renderZones() {
     if (!zone.is_enabled) {
       updatePolygonColor(poly, '#aaa')
     }
-    // click polygon → open edit panel
+    // click polygon → open edit panel (only when NOT drawing)
     ;(poly as unknown as { on: (ev: string, fn: () => void) => void }).on('click', () => {
-      openEdit(zone)
+      if (!isDrawing.value) openEdit(zone)
     })
     polygonMap.set(zone.id, poly)
   }
@@ -286,7 +286,7 @@ async function handleToggle(zone: GeoZone) {
           size="small"
           class="zone-table"
           highlight-current-row
-          @row-click="(row: GeoZone) => { highlightZone(row); fitPolygon(polygonMap.get(row.id)!) }"
+          @row-click="(row: GeoZone) => { if (!isDrawing.value) { highlightZone(row); const p = polygonMap.get(row.id); if (p) fitPolygon(p) } }"
         >
           <el-table-column label="名称" prop="name" min-width="90" show-overflow-tooltip />
           <el-table-column label="类型" width="80">
@@ -301,7 +301,7 @@ async function handleToggle(zone: GeoZone) {
           </el-table-column>
           <el-table-column label="启用" width="60" align="center">
             <template #default="{ row }">
-              <el-switch :model-value="row.is_enabled" @change="handleToggle(row)" />
+              <el-switch :model-value="row.is_enabled" @change="handleToggle(row)" @click.stop />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="90" fixed="right">

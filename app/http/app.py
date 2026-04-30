@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
     from app.http.routers.router_events import router as router_events
     from app.http.routers.router_users import router as router_users
     from app.http.routers.router_admin import router as router_admin
+    from app.http.routers.router_tcp_messages import router as router_tcp_messages
     from app.http.routers.router_stream import router as router_stream
 
     app.include_router(router_auth.router)
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(router_events)
     app.include_router(router_users)
     app.include_router(router_admin)
+    app.include_router(router_tcp_messages)
     app.include_router(router_stream)
 
     # 监控页面

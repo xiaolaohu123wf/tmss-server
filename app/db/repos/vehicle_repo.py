@@ -25,6 +25,10 @@ class VehicleRow:
     vehicle_type: str
     load_capacity: Optional[Decimal]
     notes: Optional[str]
+    driver_name: Optional[str] = None
+    fleet_name: Optional[str] = None
+    device_id: Optional[int] = None
+    device_imei: Optional[str] = None
 
 
 class VehicleRepo:
@@ -55,9 +59,10 @@ class VehicleRepo:
         vehicle_type: str = "",
         load_capacity: Optional[Decimal] = None,
         notes: Optional[str] = None,
+        driver_name: Optional[str] = None,
     ) -> int:
         vehicle_id: int = await conn.fetchval(
-            INSERT_VEHICLE_SQL, fleet_id, license_plate, vehicle_type, load_capacity, notes
+            INSERT_VEHICLE_SQL, fleet_id, license_plate, vehicle_type, load_capacity, notes, driver_name,
         )
         return vehicle_id
 
@@ -70,10 +75,11 @@ class VehicleRepo:
         load_capacity: Optional[Decimal] = None,
         notes: Optional[str] = None,
         fleet_id: Optional[int] = None,
+        driver_name: Optional[str] = None,
     ) -> None:
         await conn.execute(
             UPDATE_VEHICLE_SQL,
-            vehicle_id, license_plate, vehicle_type, load_capacity, notes, fleet_id,
+            vehicle_id, license_plate, vehicle_type, load_capacity, notes, fleet_id, driver_name,
         )
 
     async def soft_delete(
@@ -85,6 +91,7 @@ class VehicleRepo:
 
 
 def _to_vehicle_row(row: asyncpg.Record) -> VehicleRow:  # type: ignore[type-arg]
+    keys = row.keys()
     return VehicleRow(
         id=row["id"],
         fleet_id=row["fleet_id"],
@@ -92,4 +99,8 @@ def _to_vehicle_row(row: asyncpg.Record) -> VehicleRow:  # type: ignore[type-arg
         vehicle_type=row["vehicle_type"],
         load_capacity=row["load_capacity"],
         notes=row["notes"],
+        driver_name=row["driver_name"] if "driver_name" in keys else None,
+        fleet_name=row["fleet_name"] if "fleet_name" in keys else None,
+        device_id=row["device_id"] if "device_id" in keys else None,
+        device_imei=row["device_imei"] if "device_imei" in keys else None,
     )

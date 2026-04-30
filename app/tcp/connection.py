@@ -17,6 +17,7 @@ from app.tcp.handlers.time_weather_handler import TimeWeatherHandler
 from app.tcp.handlers.gps_handler import GpsHandler
 from app.tcp.handlers.full_state_handler import FullStateHandler
 from app.tcp.protocol import extract_imei, parse_frame, split_frames
+from app.tcp.raw_trace import record_rx
 from app.models.tcp_packets import FullStatePacket
 
 logger = structlog.get_logger()
@@ -95,6 +96,7 @@ class ConnectionHandler:
                 if not chunk:
                     break  # 对端关闭
 
+                record_rx(self._peer, chunk)
                 buf += chunk
                 if len(buf) > MAX_BUF:
                     await logger.awarning("tcp_buf_overflow", peer=self._peer)

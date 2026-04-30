@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import ipaddress
 from typing import Optional
 
 import asyncpg
@@ -11,6 +11,7 @@ from app.cache.pool import get_redis
 from app.cache.session_repo import SessionData, SessionRepo
 from app.core.enums import UserRole
 from app.core.exceptions import PermissionDeniedError
+from app.config import settings
 from app.db.deps import get_db_conn
 from app.services.auth_service import AuthService
 
@@ -47,6 +48,44 @@ async def require_manager(
     if session.role != UserRole.MANAGER:
         raise PermissionDeniedError("需要管理员权限")
     return session
+
+
+def _client_is_loopback(request: Request) -> bool:
+    """直连客户端是否为回环地址（不信任 X-Forwarded-For）。"""
+    client = request.client
+    if client is None:
+        return False
+    try:
+        return ipaddress.ip_address(client.host).is_loopback
+    except ValueError:
+        return False
+
+
+async def require_tcp_debug_access(
+    request: Request,
+    redis: Redis = Depends(get_redis),
+) -> None:
+    """
+    TCP 原始报文调试接口：本机回环免 Cookie；否则与管理员权限相同。
+    若配置 tcp_messages_public=True，则任意来源免登录（仅限可信环境）。
+    """
+    if settings.tcp_messages_public or _client_is_loopback(request):
+        return
+    session_id: Optional[str] = request.cookies.get(COOKIE_NAME)
+    if not session_id:
+        raise PermissionDeniedError("未登录")
+
+    session = await _session_repo.get(redis, session_id)
+    if session is None:
+        raise PermissionDeniedError("会话已过期，请重新登录")
+
+    if _session_repo.is_expired(session):
+        await _session_repo.delete(redis, session_id)
+        raise PermissionDeniedError("会话已过期，请重新登录")
+
+    await _session_repo.refresh(redis, session_id)
+    if session.role != UserRole.MANAGER:
+        raise PermissionDeniedError("需要管理员权限")
 
 
 async def require_fleet_or_above(

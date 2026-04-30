@@ -29,6 +29,7 @@ export type EventType =
   | 'zone_exit'
   | 'device_offline'
   | 'unreported_exit'
+  | 'manual_command'
 
 export type LocType = 'gps' | 'lbs'
 
@@ -75,12 +76,14 @@ export type VehicleType = 'truck' | 'loader' | 'other'
 export interface Vehicle {
   id: number
   fleet_id: number | null
-  fleet_name?: string
+  fleet_name: string | null
   license_plate: string
   vehicle_type: VehicleType
   load_capacity: number | null
+  driver_name: string | null
   device_id: number | null
-  device_imei?: string | null
+  device_imei: string | null
+  notes: string | null
   created_at: string
 }
 
@@ -89,6 +92,8 @@ export interface VehicleCreate {
   license_plate: string
   vehicle_type: VehicleType
   load_capacity?: number
+  driver_name?: string
+  notes?: string
 }
 
 export interface VehicleUpdate {
@@ -110,9 +115,14 @@ export interface Device {
   vehicle_id: number | null
   vehicle_license?: string | null
   created_at: string
-  // runtime (not persisted)
-  online?: boolean
-  last_heartbeat_at?: string | null
+  // runtime – from device_registry
+  online: boolean
+  last_heartbeat_at: string | null
+  // latest location
+  last_loc_type: 'gps' | 'lbs' | null   // null = not yet located
+  last_lat: number | null
+  last_lng: number | null
+  last_location_at: string | null
 }
 
 export interface DeviceCreate {
@@ -164,26 +174,28 @@ export interface GeoZoneUpdate {
 
 export interface TmssEvent {
   id: number
-  device_id: number
+  device_id: number | null
   vehicle_id: number | null
-  fleet_id: number | null
+  vehicle_license: string | null
   event_type: EventType
+  severity: number
+  zone_id: number | null
   lat: number | null
   lng: number | null
   speed: number | null
-  extra: Record<string, unknown> | null
-  created_at: string
-  vehicle_license?: string | null
+  cmd_sent: string | null
+  detail: Record<string, unknown> | null
+  occurred_at: string
 }
 
 export interface EventQuery {
   vehicle_id?: number
-  fleet_id?: number
   event_type?: EventType
-  start_time?: string
-  end_time?: string
+  // mapped to backend param names
+  start?: string
+  end?: string
   page?: number
-  page_size?: number
+  size?: number
 }
 
 export interface PagedResult<T> {

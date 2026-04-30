@@ -6,6 +6,7 @@ import type { FormInstance } from 'element-plus'
 import { usersApi } from '@/api/users'
 import { fleetsApi } from '@/api/fleets'
 import type { AppUser, UserCreate, Fleet, UserRole } from '@/types'
+import { formatChinaDateTime } from '@/utils/datetime'
 
 const users = ref<AppUser[]>([])
 const fleets = ref<Fleet[]>([])
@@ -83,7 +84,9 @@ const roleLabel = (role: string) => {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" prop="created_at" width="170" />
+      <el-table-column label="创建时间" width="175">
+        <template #default="{ row }">{{ formatChinaDateTime(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
           <el-button link type="danger" @click="handleDelete(row)">删除</el-button>

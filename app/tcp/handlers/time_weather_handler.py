@@ -6,6 +6,7 @@ from datetime import datetime
 import structlog
 
 from app.services.weather_service import WeatherService
+from app.tcp.raw_trace import record_tx
 
 logger = structlog.get_logger()
 
@@ -21,7 +22,9 @@ class TimeWeatherHandler:
         """响应 rt 请求，回复 t{HHMMSS}。"""
         now = datetime.now()
         reply = f"t{now.hour:02d}{now.minute:02d}{now.second:02d}"
-        writer.write(reply.encode("ascii"))
+        out = reply.encode("ascii")
+        record_tx(writer, out)
+        writer.write(out)
         await writer.drain()
         await logger.adebug("time_reply_sent", reply=reply)
 
@@ -30,6 +33,8 @@ class TimeWeatherHandler:
     ) -> None:
         """响应 rw 请求，回复 w{temp}:{code}。"""
         reply = await _weather_svc.get_weather_reply(city, _WEATHER_CACHE_TTL_S)
-        writer.write(reply.encode("ascii"))
+        out = reply.encode("ascii")
+        record_tx(writer, out)
+        writer.write(out)
         await writer.drain()
         await logger.adebug("weather_reply_sent", reply=reply, city=city)

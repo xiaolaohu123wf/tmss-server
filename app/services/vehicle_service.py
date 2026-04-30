@@ -18,9 +18,13 @@ def _to_response(row: VehicleRow) -> VehicleResponse:
     return VehicleResponse(
         id=row.id,
         fleet_id=row.fleet_id,
+        fleet_name=row.fleet_name,
         license_plate=row.license_plate,
         vehicle_type=row.vehicle_type,
         load_capacity=row.load_capacity,
+        driver_name=row.driver_name,
+        device_id=row.device_id,
+        device_imei=row.device_imei,
         notes=row.notes,
     )
 
@@ -65,6 +69,7 @@ class VehicleService:
             vehicle_type=body.vehicle_type,
             load_capacity=body.load_capacity,
             notes=body.notes,
+            driver_name=body.driver_name,
         )
         row = await _repo.find_by_id(conn, new_id)
         assert row is not None
@@ -89,6 +94,7 @@ class VehicleService:
             load_capacity=body.load_capacity,
             notes=body.notes,
             fleet_id=body.fleet_id if session.role == UserRole.MANAGER else None,
+            driver_name=body.driver_name,
         )
         updated = await _repo.find_by_id(conn, vehicle_id)
         assert updated is not None

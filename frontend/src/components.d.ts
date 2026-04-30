@@ -8,6 +8,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     DeviceOnlineBadge: typeof import('./components/DeviceOnlineBadge.vue')['default']
+    DeviceStatusTag: typeof import('./components/DeviceStatusTag.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElButton: typeof import('element-plus/es')['ElButton']
@@ -39,6 +40,7 @@ declare module 'vue' {
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
     EventTypeTag: typeof import('./components/EventTypeTag.vue')['default']
     GeoZoneTypeTag: typeof import('./components/GeoZoneTypeTag.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

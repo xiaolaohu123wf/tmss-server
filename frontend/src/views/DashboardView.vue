@@ -9,12 +9,16 @@ import { useAuthStore } from '@/stores/auth'
 import VehicleStatusTag from '@/components/VehicleStatusTag.vue'
 import EventTypeTag from '@/components/EventTypeTag.vue'
 import type { VehiclePosition, AlertFrame, WorkState } from '@/types'
+import { formatChinaDateTime } from '@/utils/datetime'
 
 const dashboardStore = useDashboardStore()
 const authStore = useAuthStore()
 
-// Map
-const { map, init: initMap, createMarker } = useAmap('dashboard-map', { zoom: 13 })
+// Map — 中心点：恩施市
+const { map, init: initMap, createMarker, setLayers } = useAmap('dashboard-map', {
+  zoom: 14,
+  center: [109.4753, 30.2832],
+})
 
 // Marker registry: vehicleId → marker
 const markerMap = new Map<number, ReturnType<typeof createMarker>>()
@@ -25,7 +29,44 @@ const { lastMessage: alertFrame, status: alertStatus } = useSSE<AlertFrame>('/ap
 
 const sseReady = computed(() => locStatus.value === 'OPEN')
 
-// Selected vehicle for detail panel
+// ─── Layer switcher ──────────────────────────────────────────────────────────
+type LayerKey = 'standard' | 'satellite' | 'satellite_road' | 'traffic'
+
+const LAYER_OPTIONS: { key: LayerKey; label: string; icon: string }[] = [
+  { key: 'standard',       label: '标准地图', icon: '🗺️' },
+  { key: 'satellite',      label: '卫星图',   icon: '🛰️' },
+  { key: 'satellite_road', label: '卫星+路网', icon: '🛣️' },
+  { key: 'traffic',        label: '路况图',   icon: '🚦' },
+]
+
+const activeLayer = ref<LayerKey>('standard')
+
+function switchLayer(key: LayerKey) {
+  if (!window.AMap) return
+  activeLayer.value = key
+  switch (key) {
+    case 'standard':
+      setLayers([new window.AMap.TileLayer()])
+      break
+    case 'satellite':
+      setLayers([new window.AMap.TileLayer.Satellite()])
+      break
+    case 'satellite_road':
+      setLayers([
+        new window.AMap.TileLayer.Satellite(),
+        new window.AMap.TileLayer.RoadNet(),
+      ])
+      break
+    case 'traffic':
+      setLayers([
+        new window.AMap.TileLayer(),
+        new window.AMap.TileLayer.Traffic({ autoRefresh: true, interval: 180 }),
+      ])
+      break
+  }
+}
+
+// ─── Vehicle detail ───────────────────────────────────────────────────────────
 const selectedVehicle = ref<VehiclePosition | null>(null)
 const detailPanelVisible = ref(false)
 
@@ -157,6 +198,20 @@ onMounted(async () => {
       <div class="map-wrapper">
         <div id="dashboard-map" class="amap-container" />
 
+        <!-- Layer switcher -->
+        <div class="layer-switcher">
+          <button
+            v-for="opt in LAYER_OPTIONS"
+            :key="opt.key"
+            class="layer-btn"
+            :class="{ active: activeLayer === opt.key }"
+            @click="switchLayer(opt.key)"
+          >
+            <span class="layer-icon">{{ opt.icon }}</span>
+            <span class="layer-label">{{ opt.label }}</span>
+          </button>
+        </div>
+
         <!-- Legend -->
         <div class="map-legend">
           <div
@@ -203,7 +258,7 @@ onMounted(async () => {
               >
                 <div class="alert-header">
                   <EventTypeTag :type="alert.event_type" />
-                  <span class="alert-time">{{ alert.created_at }}</span>
+                  <span class="alert-time">{{ formatChinaDateTime(alert.created_at) }}</span>
                 </div>
                 <div class="alert-body">
                   {{ alert.license_plate ?? `设备${alert.device_id}` }} — {{ alert.message }}
@@ -242,7 +297,7 @@ onMounted(async () => {
           <el-descriptions-item label="经度">{{ selectedVehicle.lng }}</el-descriptions-item>
           <el-descriptions-item label="纬度">{{ selectedVehicle.lat }}</el-descriptions-item>
           <el-descriptions-item label="最后更新">
-            {{ selectedVehicle.recorded_at }}
+            {{ formatChinaDateTime(selectedVehicle.recorded_at) }}
           </el-descriptions-item>
         </el-descriptions>
       </template>
@@ -311,6 +366,54 @@ onMounted(async () => {
 .amap-container {
   width: 100%;
   height: 100%;
+}
+
+/* Layer switcher – top right corner of map */
+.layer-switcher {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 100;
+}
+
+.layer-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  font-size: 11px;
+  color: #303133;
+  transition: all 0.18s;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  line-height: 1;
+}
+
+.layer-btn:hover {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: #409eff;
+}
+
+.layer-btn.active {
+  background: #409eff;
+  border-color: #409eff;
+  color: #fff;
+}
+
+.layer-icon {
+  font-size: 16px;
+}
+
+.layer-label {
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .map-legend {

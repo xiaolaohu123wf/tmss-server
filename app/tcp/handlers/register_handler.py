@@ -10,6 +10,7 @@ from app.core.device_registry import DeviceRegistry
 from app.core.enums import Command
 from app.core.event_bus import event_bus
 from app.db.repos.device_repo import DeviceRepo
+from app.tcp.raw_trace import record_tx
 
 logger = structlog.get_logger()
 
@@ -75,7 +76,9 @@ class RegisterHandler:
 
         if should_greet:
             cmd = _greeting_command()
-            writer.write(cmd.value.encode("ascii"))
+            payload = cmd.value.encode("ascii")
+            record_tx(writer, payload)
+            writer.write(payload)
             await writer.drain()
             await logger.ainfo(
                 "greeting_sent", device_id=device_id, imei=imei, cmd=cmd.value

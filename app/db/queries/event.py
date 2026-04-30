@@ -42,8 +42,10 @@ COUNT_EVENTS_ALL_SQL = """
 
 SELECT_EVENTS_PAGE_SQL = """
     SELECT e.id, e.device_id, e.vehicle_id, e.event_type, e.severity,
-           e.zone_id, e.lat, e.lng, e.speed, e.cmd_sent, e.detail, e.occurred_at
+           e.zone_id, e.lat, e.lng, e.speed, e.cmd_sent, e.detail, e.occurred_at,
+           v.license_plate AS vehicle_license
     FROM event e
+    LEFT JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL
     WHERE ($1::BIGINT IS NULL OR e.vehicle_id = $1)
       AND ($2::VARCHAR IS NULL OR e.event_type = $2)
       AND ($3::TIMESTAMPTZ IS NULL OR e.occurred_at >= $3)

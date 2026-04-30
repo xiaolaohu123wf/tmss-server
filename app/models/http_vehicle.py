@@ -11,6 +11,7 @@ class VehicleCreate(BaseModel):
     vehicle_type: str = Field(default="", max_length=30)
     load_capacity: Optional[Decimal] = None
     fleet_id: Optional[int] = None
+    driver_name: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = None
 
 
@@ -19,13 +20,18 @@ class VehicleUpdate(BaseModel):
     vehicle_type: Optional[str] = Field(default=None, max_length=30)
     load_capacity: Optional[Decimal] = None
     fleet_id: Optional[int] = None
+    driver_name: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = None
 
 
 class VehicleResponse(BaseModel):
     id: int
     fleet_id: Optional[int]
+    fleet_name: Optional[str] = None
     license_plate: str
     vehicle_type: str
     load_capacity: Optional[Decimal]
+    driver_name: Optional[str] = None
+    device_id: Optional[int] = None
+    device_imei: Optional[str] = None
     notes: Optional[str]

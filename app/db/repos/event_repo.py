@@ -32,6 +32,7 @@ class EventRow:
     cmd_sent: Optional[str]
     detail: Optional[dict[str, Any]]
     occurred_at: datetime
+    vehicle_license: Optional[str] = None
 
 
 class EventRepo:
@@ -128,6 +129,7 @@ def _to_event_row(row: asyncpg.Record) -> EventRow:  # type: ignore[type-arg]
     detail = row["detail"]
     if isinstance(detail, str):
         detail = json.loads(detail)
+    keys = row.keys()
     return EventRow(
         id=row["id"],
         device_id=row["device_id"],
@@ -141,4 +143,5 @@ def _to_event_row(row: asyncpg.Record) -> EventRow:  # type: ignore[type-arg]
         cmd_sent=row["cmd_sent"],
         detail=detail,
         occurred_at=row["occurred_at"],
+        vehicle_license=row["vehicle_license"] if "vehicle_license" in keys else None,
     )

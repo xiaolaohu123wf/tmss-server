@@ -12,10 +12,32 @@ SELECT_DEVICE_BY_ID_SQL = """
 """
 
 SELECT_ALL_DEVICES_SQL = """
-    SELECT id, imei, iccid, model, firmware_version, notes, created_at
-    FROM device
-    WHERE deleted_at IS NULL
-    ORDER BY id DESC
+    SELECT d.id, d.imei, d.iccid, d.model, d.firmware_version, d.notes, d.created_at,
+           dvb.vehicle_id,
+           v.license_plate AS vehicle_license
+    FROM device d
+    LEFT JOIN device_vehicle_bind dvb
+           ON dvb.device_id = d.id AND dvb.unbound_at IS NULL
+    LEFT JOIN vehicle v
+           ON v.id = dvb.vehicle_id AND v.deleted_at IS NULL
+    WHERE d.deleted_at IS NULL
+    ORDER BY d.id DESC
+"""
+
+SELECT_LATEST_LOCATION_PER_DEVICE_SQL = """
+    SELECT DISTINCT ON (lp.device_id)
+           lp.device_id, lp.loc_type, lp.lat, lp.lng, lp.speed, lp.recorded_at
+    FROM   location_point lp
+    WHERE  lp.device_id = ANY($1::int[])
+    ORDER  BY lp.device_id, lp.recorded_at DESC
+"""
+
+UPDATE_DEVICE_METADATA_SQL = """
+    UPDATE device
+    SET firmware_version = NULLIF(trim(COALESCE($2::text, '')), ''),
+        iccid            = NULLIF(trim(COALESCE($3::text, '')), '')
+    WHERE id = $1
+      AND deleted_at IS NULL
 """
 
 INSERT_DEVICE_SQL = """

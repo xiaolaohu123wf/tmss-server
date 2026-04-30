@@ -149,6 +149,7 @@ class GpsHandler:
                 conn=conn,
                 vehicle_id=state.vehicle_id,
                 event_id=event_id,
+                speed_kmh=alert.speed,
             )
             # 告警事件推送到 SSE
             alert_payload = {

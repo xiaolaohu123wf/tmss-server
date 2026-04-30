@@ -15,6 +15,7 @@ const typeMap: Record<string, { label: string; tagType: TagType }> = {
   zone_exit:         { label: '离开围栏', tagType: 'warning' },
   device_offline:    { label: '设备离线', tagType: 'info'    },
   unreported_exit:   { label: '未报备离开',tagType: 'danger' },
+  manual_command:    { label: '手动指令',   tagType: 'primary' },
 }
 
 const config = computed(() => typeMap[props.type] ?? { label: props.type, tagType: undefined })
