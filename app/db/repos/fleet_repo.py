@@ -5,6 +5,15 @@ from typing import Optional
 
 import asyncpg
 
+SELECT_FLEET_BY_USER_SQL = """
+    SELECT f.id, f.name, f.notes
+    FROM fleet f
+    JOIN app_user u ON u.fleet_id = f.id
+    WHERE u.id = $1
+      AND f.deleted_at IS NULL
+      AND u.deleted_at IS NULL
+"""
+
 SELECT_ALL_FLEETS_SQL = """
     SELECT id, name, notes FROM fleet
     WHERE deleted_at IS NULL
@@ -29,6 +38,19 @@ INSERT_FLEET_SQL = """
 
 SOFT_DELETE_FLEET_SQL = """
     UPDATE fleet SET deleted_at = NOW()
+    WHERE id = $1 AND deleted_at IS NULL
+"""
+
+UPDATE_FLEET_SQL = """
+    UPDATE fleet
+    SET name  = COALESCE($2, name),
+        notes = $3
+    WHERE id = $1 AND deleted_at IS NULL
+"""
+
+UPDATE_FLEET_NOTES_SQL = """
+    UPDATE fleet
+    SET notes = $2
     WHERE id = $1 AND deleted_at IS NULL
 """
 
@@ -72,6 +94,29 @@ class FleetRepo:
         self, conn: asyncpg.Connection, fleet_id: int  # type: ignore[type-arg]
     ) -> None:
         await conn.execute(SOFT_DELETE_FLEET_SQL, fleet_id)
+
+    async def update(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        fleet_id: int,
+        name: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> None:
+        await conn.execute(UPDATE_FLEET_SQL, fleet_id, name, notes)
+
+    async def update_notes(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        fleet_id: int,
+        notes: Optional[str],
+    ) -> None:
+        await conn.execute(UPDATE_FLEET_NOTES_SQL, fleet_id, notes)
+
+    async def find_by_user_id(
+        self, conn: asyncpg.Connection, user_id: int  # type: ignore[type-arg]
+    ) -> Optional[FleetRow]:
+        row = await conn.fetchrow(SELECT_FLEET_BY_USER_SQL, user_id)
+        return _to_row(row) if row else None
 
 
 def _to_row(row: asyncpg.Record) -> FleetRow:  # type: ignore[type-arg]

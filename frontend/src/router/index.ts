@@ -70,6 +70,12 @@ const router = createRouter({
       meta: { layout: 'main', title: '系统设置', requiresManager: true },
     },
     {
+      path: '/fleet-profile',
+      name: 'fleetProfile',
+      component: () => import('@/views/FleetProfileView.vue'),
+      meta: { layout: 'main', title: '我的车队' },
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/dashboard',
     },

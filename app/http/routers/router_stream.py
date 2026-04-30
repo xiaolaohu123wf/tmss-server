@@ -35,6 +35,14 @@ async def _sse_generator(
                 yield ": keepalive\n\n"
 
 
+@router.head("")
+async def event_stream_head(
+    session: SessionData = Depends(require_auth),  # noqa: ARG001
+) -> dict:
+    """HEAD 预检端点：供前端 useSSE 检测可用性，不开启流。"""
+    return {}
+
+
 @router.get("")
 async def event_stream(
     request: Request,

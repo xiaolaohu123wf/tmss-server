@@ -16,6 +16,7 @@ from app.db.queries.device import (
     SELECT_DEVICE_BY_ID_SQL,
     SELECT_DEVICE_BY_IMEI_SQL,
     SELECT_LATEST_LOCATION_PER_DEVICE_SQL,
+    SELECT_UNBOUND_DEVICES_SQL,
     SOFT_DELETE_DEVICE_SQL,
     UNBIND_SQL,
     UPDATE_DEVICE_FIRMWARE_SQL,
@@ -33,6 +34,7 @@ class DeviceRow:
     notes: Optional[str]
     vehicle_id: Optional[int] = None
     vehicle_license: Optional[str] = None
+    fleet_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,12 @@ class DeviceRepo:
         self, conn: asyncpg.Connection  # type: ignore[type-arg]
     ) -> list[DeviceRow]:
         rows = await conn.fetch(SELECT_ALL_DEVICES_SQL)
+        return [_to_device_row(r) for r in rows]
+
+    async def find_unbound(
+        self, conn: asyncpg.Connection  # type: ignore[type-arg]
+    ) -> list[DeviceRow]:
+        rows = await conn.fetch(SELECT_UNBOUND_DEVICES_SQL)
         return [_to_device_row(r) for r in rows]
 
     async def latest_locations(
@@ -178,6 +186,7 @@ class DeviceRepo:
 
 
 def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
+    keys = row.keys()
     return DeviceRow(
         id=row["id"],
         imei=row["imei"],
@@ -185,8 +194,9 @@ def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
         model=row["model"],
         firmware_version=row["firmware_version"],
         notes=row["notes"],
-        vehicle_id=row["vehicle_id"] if "vehicle_id" in row.keys() else None,
-        vehicle_license=row["vehicle_license"] if "vehicle_license" in row.keys() else None,
+        vehicle_id=row["vehicle_id"] if "vehicle_id" in keys else None,
+        vehicle_license=row["vehicle_license"] if "vehicle_license" in keys else None,
+        fleet_id=row["fleet_id"] if "fleet_id" in keys else None,
     )
 
 

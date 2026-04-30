@@ -52,6 +52,11 @@ export async function put<T>(url: string, data?: unknown, config?: AxiosRequestC
   return (res.data as { ok: true; data: T }).data
 }
 
+export async function patch<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+  const res = await instance.patch<ApiResponse<T>>(url, data, config)
+  return (res.data as { ok: true; data: T }).data
+}
+
 export async function del<T = null>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const res = await instance.delete<ApiResponse<T>>(url, config)
   return (res.data as { ok: true; data: T }).data

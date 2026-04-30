@@ -61,7 +61,8 @@ async function loadData() {
   try {
     const [v, d, f] = await Promise.all([
       vehiclesApi.list(),
-      devicesApi.list(),
+      // 车队长只需看未绑定设备（绑定弹窗中选择）；管理员看全部设备
+      devicesApi.list(authStore.isManager ? undefined : { unbound: true }),
       authStore.isManager ? fleetsApi.list() : Promise.resolve([]),
     ])
     vehicles.value = v

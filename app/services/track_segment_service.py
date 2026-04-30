@@ -4,13 +4,15 @@
 每个有效 GPS 包到达时调用 get_or_advance_segment()，
 返回当前应使用的 segment_id（确保已在 DB 中建立记录）。
 
-分段规则：
+分段规则（满足任一即开新段）：
+  1. 时间间隔：上一包与当前包时刻差 ≥ park_threshold_min 分钟
+  2. 停车驻留：距最后一次"移动"（位移 > PARK_STATIONARY_RADIUS_M 米）已超 park_threshold_min 分钟
   - 首包：开启新段
-  - 上一包时刻与当前包时刻差 ≥ park_threshold_min 分钟：关闭旧段，开启新段
   - 否则：续接当前段
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 import asyncpg
@@ -23,6 +25,20 @@ logger = structlog.get_logger()
 
 _ts_repo = TrackSegmentRepo()
 
+# 停车半径阈值（米）：设备在此半径内 park_threshold_min 分钟即视为停车
+PARK_STATIONARY_RADIUS_M = 10.0
+
+
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Haversine 距离（米），适用于短距离（误差 < 0.1%）。"""
+    r = 6_371_000.0  # 地球半径（米）
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
+
 
 async def get_or_advance_segment(
     state: DeviceState,
@@ -34,7 +50,7 @@ async def get_or_advance_segment(
 ) -> int:
     """
     返回当前有效的 segment_id（int）。
-    副作用：更新 state.current_segment_id 和 state.last_point_at。
+    副作用：更新 state.current_segment_id、state.last_point_at、驻留锚点。
     """
     now = recorded_at
 
@@ -46,13 +62,53 @@ async def get_or_advance_segment(
             state.last_point_at = existing.started_at
 
     need_new = False
+
+    # ── 规则 1：无当前段（首包） ──────────────────────────────────────────────
     if state.current_segment_id is None:
         need_new = True
+
+    # ── 规则 2：时间间隔分段 ──────────────────────────────────────────────────
     elif state.last_point_at is not None:
         gap_min = (now - state.last_point_at).total_seconds() / 60.0
         if gap_min >= park_threshold_min:
             need_new = True
+            await logger.adebug(
+                "segment_split_time_gap",
+                device_id=state.device_id,
+                gap_min=round(gap_min, 1),
+            )
 
+    # ── 规则 3：停车驻留分段（位移半径 < PARK_STATIONARY_RADIUS_M） ───────────
+    if not need_new and state.current_segment_id is not None:
+        anchor_lat = state.stationary_anchor_lat
+        anchor_lng = state.stationary_anchor_lng
+
+        if anchor_lat is None or anchor_lng is None:
+            # 初始化锚点
+            state.stationary_anchor_lat = lat
+            state.stationary_anchor_lng = lng
+            state.stationary_since = now
+        else:
+            dist = _distance_m(anchor_lat, anchor_lng, lat, lng)
+            if dist > PARK_STATIONARY_RADIUS_M:
+                # 设备移动了，更新锚点
+                state.stationary_anchor_lat = lat
+                state.stationary_anchor_lng = lng
+                state.stationary_since = now
+            else:
+                # 设备在锚点附近（停车中），检查驻留时长
+                if state.stationary_since is not None:
+                    parked_min = (now - state.stationary_since).total_seconds() / 60.0
+                    if parked_min >= park_threshold_min:
+                        need_new = True
+                        await logger.adebug(
+                            "segment_split_stationary",
+                            device_id=state.device_id,
+                            parked_min=round(parked_min, 1),
+                            radius_m=round(dist, 1),
+                        )
+
+    # ── 执行分段 ──────────────────────────────────────────────────────────────
     if need_new:
         # 关闭旧段（如存在）
         if state.current_segment_id is not None and state.last_point_at is not None:
@@ -83,6 +139,12 @@ async def get_or_advance_segment(
             device_id=state.device_id,
             segment_id=seg_id,
         )
+
+        # 新段开启：重置驻留锚点
+        state.stationary_anchor_lat = lat
+        state.stationary_anchor_lng = lng
+        state.stationary_since = now
+
     else:
         await _ts_repo.increment_points(conn, state.current_segment_id)  # type: ignore[arg-type]
 

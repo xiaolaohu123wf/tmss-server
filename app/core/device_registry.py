@@ -32,6 +32,10 @@ class DeviceState:
     # 轨迹分段追踪
     current_segment_id: Optional[int] = None
     last_point_at: Optional[datetime] = None
+    # 停车驻留检测（位移半径 < PARK_STATIONARY_RADIUS_M 即视为停车）
+    stationary_anchor_lat: Optional[float] = None
+    stationary_anchor_lng: Optional[float] = None
+    stationary_since: Optional[datetime] = None   # 最后一次移动超出半径的时刻
     # 作业状态机：当前驻留区的进入时刻 (用于 dwell 计算)
     zone_entry_at: Optional[datetime] = None
     zone_entry_id: Optional[int] = None   # 正在计时驻留的 zone_id

@@ -256,6 +256,8 @@ class ConnectionHandler:
 
     async def _cleanup(self) -> None:
         if self._device_id is not None:
+            # 断线前先关闭开放的轨迹段（以最后已知点为结束点）
+            await self._close_open_segment_on_disconnect()
             await event_bus.publish("device_state", {
                 "event": "device_state",
                 "type": "disconnected",
@@ -269,3 +271,36 @@ class ConnectionHandler:
         except Exception:
             pass
         await logger.ainfo("tcp_disconnected", peer=self._peer, device_id=self._device_id)
+
+    async def _close_open_segment_on_disconnect(self) -> None:
+        """TCP 断线时，若存在开放轨迹段则以最后已知点为结束点关闭。"""
+        state = await device_registry.get(self._device_id)  # type: ignore[arg-type]
+        if state is None or state.current_segment_id is None or state.last_point_at is None:
+            return
+        # 取内存中最后一个 GPS 点的坐标
+        last_pt = state.recent_points[-1] if state.recent_points else None
+        if last_pt is None:
+            return
+        try:
+            from app.db.repos.track_segment_repo import TrackSegmentRepo
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await TrackSegmentRepo().close_segment(
+                    conn,
+                    segment_id=state.current_segment_id,
+                    ended_at=state.last_point_at,
+                    end_lat=last_pt.lat,
+                    end_lng=last_pt.lng,
+                )
+            state.current_segment_id = None
+            await logger.ainfo(
+                "track_segment_closed_on_disconnect",
+                device_id=self._device_id,
+                segment_id=state.current_segment_id,
+            )
+        except Exception as exc:
+            await logger.aerror(
+                "close_segment_on_disconnect_error",
+                device_id=self._device_id,
+                error=str(exc),
+            )

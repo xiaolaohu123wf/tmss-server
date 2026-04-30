@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineOptions({ name: 'DashboardView' })
-import { ref, onMounted, watch, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { ElNotification } from 'element-plus'
 import { useAmap } from '@/composables/useAmap'
 import { useSSE } from '@/composables/useSSE'
@@ -15,13 +15,23 @@ const dashboardStore = useDashboardStore()
 const authStore = useAuthStore()
 
 // Map — 中心点：恩施市
-const { map, init: initMap, createMarker, setLayers } = useAmap('dashboard-map', {
+const { map, init: initMap, setLayers } = useAmap('dashboard-map', {
   zoom: 14,
   center: [109.4753, 30.2832],
 })
 
-// Marker registry: vehicleId → marker
-const markerMap = new Map<number, ReturnType<typeof createMarker>>()
+// ─── Marker + Trail registries ────────────────────────────────────────────────
+const markerMap = new Map<number, unknown>()
+// Track last work_state per vehicle — setContent() is expensive, skip if state unchanged
+const markerWorkState = new Map<number, WorkState>()
+// Trail: vehicleId → last TRAIL_MAX [lng, lat] points
+const TRAIL_MAX = 10
+const trailPoints = new Map<number, [number, number][]>()
+const trailPolylines = new Map<number, unknown>()
+
+// RAF batching: collect updates within a single frame and flush together
+let _rafPending = false
+const _pendingUpdates = new Map<number, VehiclePosition>()
 
 // SSE 连接 — 统一端点 /api/stream，按命名事件类型分别订阅
 const { lastMessage: locationFrame, status: locStatus, error: locError } = useSSE<VehiclePosition>('/api/stream', 'location')
@@ -70,7 +80,7 @@ function switchLayer(key: LayerKey) {
 const selectedVehicle = ref<VehiclePosition | null>(null)
 const detailPanelVisible = ref(false)
 
-// Work state → marker color
+// Work state → color for truck cab
 const STATE_COLORS: Record<WorkState, string> = {
   loading: '#fa8c16',
   unloading: '#52c41a',
@@ -79,34 +89,98 @@ const STATE_COLORS: Record<WorkState, string> = {
   unknown: '#8c8c8c',
 }
 
-function getMarkerContent(pos: VehiclePosition): string {
+/**
+ * 小卡车 SVG + 车牌标注（车牌在上方）。
+ * anchor:'bottom-center' 已由 AMap Marker 处理，不再加 transform。
+ */
+function makeTruckContent(pos: VehiclePosition): string {
   const color = STATE_COLORS[pos.work_state] ?? '#8c8c8c'
-  return `<div style="
-    width:36px;height:36px;border-radius:50%;
-    background:${color};border:3px solid #fff;
-    display:flex;align-items:center;justify-content:center;
-    color:#fff;font-size:12px;font-weight:700;
-    box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    cursor:pointer;
-  ">车</div>`
+  const plate = pos.license_plate ?? `D${pos.device_id}`
+  return [
+    `<div style="display:flex;flex-direction:column;align-items:center;cursor:pointer;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))">`,
+    `<div style="background:rgba(20,20,20,.75);color:#fff;font-size:11px;font-weight:700;`,
+    `padding:1px 6px;border-radius:3px;white-space:nowrap;margin-bottom:3px;letter-spacing:.5px">${plate}</div>`,
+    `<svg width="32" height="24" viewBox="0 0 32 24" fill="none" xmlns="http://www.w3.org/2000/svg">`,
+    `<rect x="1" y="7" width="18" height="13" rx="2" fill="${color}"/>`,
+    `<rect x="19" y="11" width="10" height="9" rx="1.5" fill="${color}"/>`,
+    `<rect x="20" y="12" width="5" height="5" rx="1" fill="rgba(255,255,255,.6)"/>`,
+    `<circle cx="7" cy="21" r="3" fill="#222"/><circle cx="7" cy="21" r="1.4" fill="#666"/>`,
+    `<circle cx="24" cy="21" r="3" fill="#222"/><circle cx="24" cy="21" r="1.4" fill="#666"/>`,
+    `<rect x="28" y="14" width="3" height="2" rx="1" fill="#ffe066"/>`,
+    `</svg></div>`,
+  ].join('')
 }
 
-function updateOrCreateMarker(pos: VehiclePosition) {
-  if (!map.value) return
-  const key = pos.vehicle_id ?? pos.device_id
-  const position: [number, number] = [pos.lng, pos.lat]
+/** 批量刷新待处理的 marker（RAF 回调中执行）*/
+function _flushUpdates() {
+  _rafPending = false
+  if (!map.value || !window.AMap) { _pendingUpdates.clear(); return }
 
-  let marker = markerMap.get(key)
-  if (marker) {
-    marker.setPosition(position)
-  } else {
-    // Use custom HTML content marker
-    const m = createMarker(position, pos)
-    m.on('click', () => {
-      selectedVehicle.value = pos
-      detailPanelVisible.value = true
-    })
-    markerMap.set(key, m)
+  for (const [key, pos] of _pendingUpdates) {
+    const lngLat: [number, number] = [pos.lng, pos.lat]
+
+    // ── 拖影数据 ──
+    const trail = trailPoints.get(key) ?? []
+    trail.push(lngLat)
+    if (trail.length > TRAIL_MAX) trail.shift()
+    trailPoints.set(key, trail)
+
+    // ── 拖影折线 ──
+    const polyline = trailPolylines.get(key) as { setPath(p: unknown): void } | undefined
+    if (polyline) {
+      polyline.setPath(trail)
+    } else if (trail.length >= 2) {
+      const pl = new window.AMap.Polyline({
+        path: trail,
+        strokeColor: '#1890ff',
+        strokeOpacity: 0.55,
+        strokeWeight: 4,
+        strokeStyle: 'solid',
+        lineJoin: 'round',
+        lineCap: 'round',
+        map: map.value,
+      })
+      trailPolylines.set(key, pl)
+    }
+
+    // ── Marker ──
+    const marker = markerMap.get(key) as {
+      setPosition(p: [number, number]): void
+      setContent(c: string): void
+    } | undefined
+
+    if (marker) {
+      marker.setPosition(lngLat)
+      // setContent() 昂贵（重建 DOM），只在作业状态变化时才调用
+      if (markerWorkState.get(key) !== pos.work_state) {
+        marker.setContent(makeTruckContent(pos))
+        markerWorkState.set(key, pos.work_state)
+      }
+    } else {
+      const m = new window.AMap.Marker({
+        position: lngLat,
+        content: makeTruckContent(pos),
+        anchor: 'bottom-center',
+        map: map.value,
+      })
+      ;(m as { on(e: string, fn: () => void): void }).on('click', () => {
+        selectedVehicle.value = pos
+        detailPanelVisible.value = true
+      })
+      markerMap.set(key, m)
+      markerWorkState.set(key, pos.work_state)
+    }
+  }
+  _pendingUpdates.clear()
+}
+
+/** 入队一帧更新，同一帧内同一车辆的多次更新只保留最新一条 */
+function updateOrCreateMarker(pos: VehiclePosition) {
+  const key = pos.vehicle_id ?? pos.device_id
+  _pendingUpdates.set(key, pos)
+  if (!_rafPending) {
+    _rafPending = true
+    requestAnimationFrame(_flushUpdates)
   }
 }
 
@@ -147,6 +221,15 @@ const stateStats = computed(() => {
 onMounted(async () => {
   await nextTick()
   initMap()
+})
+
+onUnmounted(() => {
+  _rafPending = false
+  _pendingUpdates.clear()
+  markerWorkState.clear()
+  trailPoints.clear()
+  trailPolylines.clear()
+  markerMap.clear()
 })
 </script>
 
@@ -214,12 +297,18 @@ onMounted(async () => {
 
         <!-- Legend -->
         <div class="map-legend">
+          <div class="legend-title">图例</div>
           <div
             v-for="(color, state) in STATE_COLORS"
             :key="state"
             class="legend-item"
           >
-            <span class="legend-dot" :style="{ background: color }" />
+            <svg width="16" height="12" viewBox="0 0 32 24" fill="none">
+              <rect x="1" y="7" width="18" height="13" rx="2" :fill="color"/>
+              <rect x="19" y="11" width="10" height="9" rx="1.5" :fill="color"/>
+              <circle cx="7" cy="21" r="3" fill="#222"/>
+              <circle cx="24" cy="21" r="3" fill="#222"/>
+            </svg>
             <VehicleStatusTag :state="(state as WorkState)" />
           </div>
         </div>
@@ -426,19 +515,21 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.legend-title {
+  font-size: 11px;
+  color: #909399;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.legend-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 
 .side-panel {

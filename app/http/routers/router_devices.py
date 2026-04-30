@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncpg
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from app.cache.session_repo import SessionData
 from app.core.device_registry import device_registry
-from app.core.enums import Command, EventType
-from app.core.exceptions import NotFoundError
+from app.core.enums import Command, EventType, UserRole
+from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.db.deps import get_db_conn
 from app.db.repos.device_repo import DeviceRepo
 from app.db.repos.event_repo import EventRepo
@@ -30,17 +31,19 @@ _event_repo = EventRepo()
 
 @router.get("")
 async def list_devices(
+    unbound: Optional[bool] = Query(default=None, description="仅返回未绑定车辆的设备"),
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    rows = await _repo.find_all(conn)
+    if unbound:
+        rows = await _repo.find_unbound(conn)
+    else:
+        rows = await _repo.find_all(conn)
 
-    # Fetch latest location per device (batch)
     device_ids = [r.id for r in rows]
     locs = await _repo.latest_locations(conn, device_ids)
     loc_map = {lp.device_id: lp for lp in locs}
 
-    # Runtime online state from device_registry (in-memory)
     online_states = await device_registry.list_online()
     online_map = {s.device_id: s for s in online_states}
 
@@ -53,6 +56,7 @@ async def list_devices(
             model=r.model, firmware_version=r.firmware_version, notes=r.notes,
             vehicle_id=r.vehicle_id,
             vehicle_license=r.vehicle_license,
+            fleet_id=r.fleet_id,
             online=state is not None,
             last_heartbeat_at=state.last_heartbeat_at.isoformat() if state else None,
             last_loc_type=loc.loc_type if loc else None,
@@ -88,14 +92,23 @@ async def bind_device(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    # 先解绑旧绑定（如有）
+    # 车队长只能把设备绑定到本车队的车辆
+    if session.role == UserRole.FLEET_CAPTAIN:
+        vehicle_row = await conn.fetchrow(
+            "SELECT fleet_id FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+            body.vehicle_id,
+        )
+        if vehicle_row is None:
+            raise NotFoundError("车辆不存在")
+        if vehicle_row["fleet_id"] != session.fleet_id:
+            raise PermissionDeniedError("只能绑定本车队的车辆")
+
     await _repo.unbind(conn, device_id)
     bind_id = await _repo.bind(
         conn, device_id, body.vehicle_id,
         driver_id=body.driver_id,
         operator=body.operator or session.username,
     )
-    # 查询车辆所属车队，同步刷新在线设备的内存状态
     fleet_row = await conn.fetchrow(
         "SELECT fleet_id FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
         body.vehicle_id,
@@ -111,8 +124,19 @@ async def unbind_device(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
+    # 车队长只能解绑本车队的设备
+    if session.role == UserRole.FLEET_CAPTAIN:
+        bind = await _repo.get_active_bind_by_device(conn, device_id)
+        if bind is None:
+            raise NotFoundError("设备当前未绑定")
+        vehicle_row = await conn.fetchrow(
+            "SELECT fleet_id FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+            bind.vehicle_id,
+        )
+        if vehicle_row is None or vehicle_row["fleet_id"] != session.fleet_id:
+            raise PermissionDeniedError("只能解绑本车队的设备")
+
     await _repo.unbind(conn, device_id)
-    # 同步清除在线设备的内存绑定状态
     await device_registry.update_binding(device_id, None, None)
     return ok({"message": "已解绑"})
 

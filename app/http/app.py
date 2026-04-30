@@ -28,6 +28,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 首次启动：若无管理员账号，自动创建 admin/admin123
     await _ensure_default_admin(pool)
 
+    # 启动时立即清理一次残留的超时开放段（处理上次意外重启遗留的未关段）
+    from app.services.segment_sweeper import close_stale_segments_once, segment_sweeper_loop
+    try:
+        n = await close_stale_segments_once()
+        if n:
+            await logger.ainfo("startup_stale_segments_fixed", count=n)
+    except Exception as exc:
+        await logger.awarning("startup_stale_segments_skip", error=str(exc))
+
+    # 后台任务：定期关闭超时轨迹段（弥补断线未触发关段的情况）
+    from app.core.task_registry import task_registry
+    task_registry.spawn(segment_sweeper_loop(), name="segment-sweeper")
+
     yield
 
     # ── 关闭 ──────────────────────────────────
@@ -71,6 +84,7 @@ def create_app() -> FastAPI:
     from app.http.routers import router_auth
     from app.http.routers.router_vehicles import router as router_vehicles
     from app.http.routers.router_devices import router as router_devices
+    from app.http.routers.router_fleets import router as router_fleets
     from app.http.routers.router_geo_zones import router as router_geo_zones
     from app.http.routers.router_events import router as router_events
     from app.http.routers.router_users import router as router_users
@@ -82,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(router_auth.router)
     app.include_router(router_vehicles)
     app.include_router(router_devices)
+    app.include_router(router_fleets)
     app.include_router(router_geo_zones)
     app.include_router(router_events)
     app.include_router(router_users)
@@ -103,5 +118,20 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    # ── 前端 SPA 托管（生产模式）─────────────────────────────────────────
+    # 当 frontend/dist 存在时，将打包产物挂载到 HTTP 服务，避免额外部署 nginx。
+    # /assets 静态资源直接从磁盘返回；其余路径（非 /api）返回 index.html（SPA 路由兜底）。
+    _dist_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    _dist_dir = os.path.normpath(_dist_dir)
+    if os.path.isdir(_dist_dir):
+        app.mount("/assets", StaticFiles(directory=os.path.join(_dist_dir, "assets")), name="vue-assets")
+
+        _index_html = os.path.join(_dist_dir, "index.html")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str) -> FileResponse:  # noqa: ARG001
+            """SPA 路由兜底：任何非 /api/* 路径都返回 index.html，交由 Vue Router 处理。"""
+            return FileResponse(_index_html)
 
     return app

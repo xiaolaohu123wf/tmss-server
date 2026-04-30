@@ -108,5 +108,5 @@ async def deactivate_user(
     row = await _repo.find_by_id(conn, user_id)
     if row is None:
         raise NotFoundError("用户不存在")
-    await _repo.deactivate(conn, user_id)
-    return ok({"message": "用户已停用"})
+    await _repo.soft_delete(conn, user_id)
+    return ok({"message": "用户已删除"})

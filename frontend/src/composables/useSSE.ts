@@ -33,8 +33,8 @@ export function useSSE<T = unknown>(url: string, eventName?: string) {
   }
 
   function connect() {
-    // 预检端点避免 EventSource 静默吞 404
-    fetch(url, { method: 'GET', credentials: 'include', headers: { Accept: 'text/event-stream' } })
+    // 用 HEAD 预检端点：不打开 SSE 流，只获取状态码，避免 GET+text/event-stream 导致连接泄漏
+    fetch(url, { method: 'HEAD', credentials: 'include' })
       .then((res) => {
         if (res.status === 404 || res.status === 403 || res.status === 401) {
           status.value = 'ERROR'

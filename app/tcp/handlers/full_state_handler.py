@@ -38,6 +38,9 @@ class FullStateHandler:
         packet: FullStatePacket,
         conn: asyncpg.Connection,  # type: ignore[type-arg]
     ) -> None:
+        # 全量包证明设备在线，刷新心跳时间戳（防止心跳监控误报 timeout）
+        await self._registry.update_heartbeat(state.device_id)
+
         # 全量包中的 ICCID：仅当库内为空或为占位（na 等）时补全（设备字段 ic → packet.iccid）
         iccid_val = (packet.iccid or "").strip()
         if iccid_val:

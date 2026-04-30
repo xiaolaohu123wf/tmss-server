@@ -14,7 +14,8 @@ SELECT_DEVICE_BY_ID_SQL = """
 SELECT_ALL_DEVICES_SQL = """
     SELECT d.id, d.imei, d.iccid, d.model, d.firmware_version, d.notes, d.created_at,
            dvb.vehicle_id,
-           v.license_plate AS vehicle_license
+           v.license_plate AS vehicle_license,
+           v.fleet_id      AS fleet_id
     FROM device d
     LEFT JOIN device_vehicle_bind dvb
            ON dvb.device_id = d.id AND dvb.unbound_at IS NULL
@@ -97,4 +98,17 @@ UNBIND_SQL = """
     SET unbound_at = NOW()
     WHERE device_id = $1
       AND unbound_at IS NULL
+"""
+
+SELECT_UNBOUND_DEVICES_SQL = """
+    SELECT d.id, d.imei, d.iccid, d.model, d.firmware_version, d.notes, d.created_at,
+           NULL::int    AS vehicle_id,
+           NULL::varchar AS vehicle_license
+    FROM device d
+    WHERE d.deleted_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM device_vehicle_bind dvb
+          WHERE dvb.device_id = d.id AND dvb.unbound_at IS NULL
+      )
+    ORDER BY d.id DESC
 """

@@ -2,8 +2,8 @@ import { get, post, put, del } from './index'
 import type { Device, DeviceCreate } from '@/types'
 
 export const devicesApi = {
-  list: () =>
-    get<Device[]>('/devices'),
+  list: (params?: { unbound?: boolean }) =>
+    get<Device[]>('/devices', { params }),
 
   create: (data: DeviceCreate) =>
     post<Device>('/devices', data),

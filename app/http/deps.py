@@ -97,6 +97,15 @@ async def require_fleet_or_above(
     return session
 
 
+async def require_fleet_captain(
+    session: SessionData = Depends(require_auth),
+) -> SessionData:
+    """严格只允许 fleet_captain 角色，manager 不可使用此接口。"""
+    if session.role != UserRole.FLEET_CAPTAIN:
+        raise PermissionDeniedError("仅车队长可执行此操作")
+    return session
+
+
 async def require_password_confirm(
     request: Request,
     session: SessionData = Depends(require_manager),

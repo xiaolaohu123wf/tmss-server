@@ -4,7 +4,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { fleetsApi } from '@/api/fleets'
-import type { Fleet, FleetCreate } from '@/types'
+import type { Fleet, FleetCreate, FleetCaptainCredentials } from '@/types'
 import { formatChinaDateTime } from '@/utils/datetime'
 
 const fleets = ref<Fleet[]>([])
@@ -12,7 +12,12 @@ const loading = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
-const form = ref<FleetCreate>({ name: '', notes: '' })
+const form = ref<FleetCreate>({ name: '', notes: '', captain_username: '' })
+
+// 创建成功后展示账号弹窗
+const credDialogVisible = ref(false)
+const newCredentials = ref<FleetCaptainCredentials | null>(null)
+const newFleetName = ref('')
 
 async function loadData() {
   loading.value = true
@@ -27,7 +32,7 @@ onMounted(loadData)
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', notes: '' }
+  form.value = { name: '', notes: '', captain_username: '' }
   dialogVisible.value = true
 }
 
@@ -38,15 +43,23 @@ function openEdit(fleet: Fleet) {
 }
 
 async function handleSubmit() {
-  await formRef.value!.validate()
-  if (editingId.value) {
-    await fleetsApi.update(editingId.value, form.value)
-    ElMessage.success('更新成功')
-  } else {
-    await fleetsApi.create(form.value)
-    ElMessage.success('已创建')
+  try {
+    await formRef.value!.validate()
+  } catch {
+    return
   }
-  dialogVisible.value = false
+  if (editingId.value) {
+    await fleetsApi.update(editingId.value, { name: form.value.name, notes: form.value.notes })
+    ElMessage.success('更新成功')
+    dialogVisible.value = false
+  } else {
+    const result = await fleetsApi.create(form.value)
+    dialogVisible.value = false
+    // 展示初始账号密码
+    newFleetName.value = result.name
+    newCredentials.value = result.captain
+    credDialogVisible.value = true
+  }
   await loadData()
 }
 
@@ -55,10 +68,17 @@ async function handleDelete(fleet: Fleet) {
     type: 'warning',
     confirmButtonText: '删除',
     confirmButtonClass: 'el-button--danger',
+    lockScroll: false,
   })
   await fleetsApi.delete(fleet.id)
   ElMessage.success('已删除')
   await loadData()
+}
+
+function copyCredentials() {
+  if (!newCredentials.value) return
+  const text = `用户名：${newCredentials.value.username}\n密码：${newCredentials.value.initial_password}`
+  navigator.clipboard.writeText(text).then(() => ElMessage.success('已复制到剪贴板'))
 }
 </script>
 
@@ -84,18 +104,46 @@ async function handleDelete(fleet: Fleet) {
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑车队' : '新增车队'" width="420px" draggable>
-      <el-form ref="formRef" :model="form" label-width="80px">
+    <!-- 新建/编辑车队对话框 -->
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑车队' : '新增车队'" width="440px" draggable>
+      <el-form ref="formRef" :model="form" label-width="90px">
         <el-form-item label="车队名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]">
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" :disabled="!!editingId" />
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.notes" type="textarea" :rows="3" />
+          <el-input v-model="form.notes" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item v-if="!editingId" label="管理员账号" prop="captain_username">
+          <el-input v-model="form.captain_username" placeholder="留空则自动生成 fleet_{id}" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSubmit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 账号密码展示弹窗（仅新建时显示一次） -->
+    <el-dialog
+      v-model="credDialogVisible"
+      title="车队长账号已创建"
+      width="400px"
+      :close-on-click-modal="false"
+    >
+      <p class="cred-tip">车队「<strong>{{ newFleetName }}</strong>」创建成功，初始账号如下，<em>请立即妥善保存</em>：</p>
+      <div class="cred-box">
+        <div class="cred-row">
+          <span class="cred-label">用户名</span>
+          <span class="cred-value">{{ newCredentials?.username }}</span>
+        </div>
+        <div class="cred-row">
+          <span class="cred-label">初始密码</span>
+          <span class="cred-value mono">{{ newCredentials?.initial_password }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="copyCredentials" type="primary" plain>复制到剪贴板</el-button>
+        <el-button type="primary" @click="credDialogVisible = false">我已记录，关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -105,4 +153,19 @@ async function handleDelete(fleet: Fleet) {
 .page-container { background: #fff; border-radius: 8px; padding: 20px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+
+.cred-tip { margin: 0 0 16px; font-size: 14px; color: #303133; line-height: 1.6; }
+.cred-box {
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cred-row { display: flex; align-items: center; gap: 12px; }
+.cred-label { width: 70px; font-size: 13px; color: #909399; flex-shrink: 0; }
+.cred-value { font-size: 15px; font-weight: 600; color: #1d2129; }
+.cred-value.mono { font-family: monospace; letter-spacing: 1px; color: #1677ff; }
 </style>

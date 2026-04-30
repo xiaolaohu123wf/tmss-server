@@ -1,22 +1,27 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 import asyncpg
+from asyncpg import UniqueViolationError
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.cache.session_repo import SessionData
+from app.core.enums import UserRole
 from app.core.exceptions import NotFoundError, ValidationError
 from app.db.deps import get_db_conn
 from app.db.repos.business_config_repo import BusinessConfigRepo, BusinessConfigRow
 from app.db.repos.fleet_repo import FleetRepo
+from app.db.repos.user_repo import UserRepo
 from app.http.deps import require_manager, require_password_confirm
 from app.http.response import ok
 from app.tcp.connection import invalidate_gps_handler
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 _fleet_repo = FleetRepo()
+_user_repo = UserRepo()
 _business_config_repo = BusinessConfigRepo()
 
 
@@ -58,12 +63,30 @@ def _payload_from_row(row: BusinessConfigRow) -> BusinessConfigPayload:
 class FleetCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     notes: Optional[str] = None
+    captain_username: Optional[str] = Field(default=None, min_length=2, max_length=50)
+
+
+class FleetUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    notes: Optional[str] = None
 
 
 class FleetResponse(BaseModel):
     id: int
     name: str
     notes: Optional[str]
+
+
+class FleetCaptainCredentials(BaseModel):
+    username: str
+    initial_password: str
+
+
+class FleetCreateResponse(BaseModel):
+    id: int
+    name: str
+    notes: Optional[str]
+    captain: FleetCaptainCredentials
 
 
 @router.get("/config")
@@ -109,12 +132,65 @@ async def create_fleet(
     existing = await _fleet_repo.find_by_name(conn, body.name)
     if existing is not None:
         raise ValidationError("车队名称已存在")
-    new_id = await _fleet_repo.create(
-        conn, name=body.name, notes=body.notes,
-    )
+
+    year = datetime.now(tz=timezone.utc).year
+
+    try:
+        async with conn.transaction():
+            new_id = await _fleet_repo.create(conn, name=body.name, notes=body.notes)
+
+            # 生成车队长用户名（优先使用传入值，否则用 fleet_{id}）
+            candidate = body.captain_username or f"fleet_{new_id}"
+            # 如果用户名已被占用，强制回退到 fleet_{id}
+            if body.captain_username:
+                dup = await _user_repo.find_by_username(conn, candidate)
+                if dup is not None:
+                    candidate = f"fleet_{new_id}"
+
+            initial_password = f"Fleet@{year}#{new_id}"
+            await _user_repo.create(
+                conn,
+                username=candidate,
+                plain_password=initial_password,
+                role=UserRole.FLEET_CAPTAIN,
+                fleet_id=new_id,
+            )
+    except UniqueViolationError:
+        raise ValidationError("车队名称已存在（含已删除的历史车队），请使用其他名称")
+
     row = await _fleet_repo.find_by_id(conn, new_id)
     assert row is not None
-    return ok(FleetResponse(id=row.id, name=row.name, notes=row.notes).model_dump())
+    return ok(
+        FleetCreateResponse(
+            id=row.id,
+            name=row.name,
+            notes=row.notes,
+            captain=FleetCaptainCredentials(
+                username=candidate,
+                initial_password=initial_password,
+            ),
+        ).model_dump()
+    )
+
+
+@router.put("/fleets/{fleet_id}")
+async def update_fleet(
+    fleet_id: int,
+    body: FleetUpdateRequest,
+    session: SessionData = Depends(require_manager),
+    conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
+) -> dict:
+    row = await _fleet_repo.find_by_id(conn, fleet_id)
+    if row is None:
+        raise NotFoundError("车队不存在")
+    if body.name and body.name != row.name:
+        dup = await _fleet_repo.find_by_name(conn, body.name)
+        if dup is not None and dup.id != fleet_id:
+            raise ValidationError("车队名称已存在")
+    await _fleet_repo.update(conn, fleet_id, name=body.name, notes=body.notes)
+    updated = await _fleet_repo.find_by_id(conn, fleet_id)
+    assert updated is not None
+    return ok(FleetResponse(id=updated.id, name=updated.name, notes=updated.notes).model_dump())
 
 
 @router.delete("/fleets/{fleet_id}")

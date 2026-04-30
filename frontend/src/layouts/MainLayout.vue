@@ -104,6 +104,15 @@ async function handleLogout() {
             {{ roleLabel }}
           </el-tag>
           <span class="username">{{ auth.session?.username }}</span>
+          <el-button
+            v-if="auth.role === 'fleet_captain'"
+            link
+            type="primary"
+            @click="router.push('/fleet-profile')"
+          >
+            <el-icon><OfficeBuilding /></el-icon>
+            我的车队
+          </el-button>
           <el-button link @click="handleLogout">
             <el-icon><SwitchButton /></el-icon>
             退出

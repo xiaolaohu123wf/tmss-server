@@ -47,6 +47,7 @@ export interface AMapMarker {
   setExtData(data: unknown): void
   getExtData(): unknown
   setIcon(icon: unknown): void
+  setContent(content: string): void
 }
 
 export interface AMapPolygon {

@@ -37,6 +37,7 @@ class DeviceResponse(BaseModel):
     # binding
     vehicle_id: Optional[int] = None
     vehicle_license: Optional[str] = None
+    fleet_id: Optional[int] = None
     # runtime (from device_registry)
     online: bool = False
     last_heartbeat_at: Optional[str] = None

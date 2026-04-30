@@ -60,11 +60,31 @@ export interface Fleet {
 export interface FleetCreate {
   name: string
   notes?: string
+  captain_username?: string
 }
 
 export interface FleetUpdate {
   name?: string
   notes?: string
+}
+
+export interface FleetCaptainCredentials {
+  username: string
+  initial_password: string
+}
+
+export interface FleetCreateResult extends Fleet {
+  captain: FleetCaptainCredentials
+}
+
+export interface FleetMe {
+  id: number
+  name: string
+  notes: string | null
+}
+
+export interface FleetMeUpdate {
+  notes?: string | null
 }
 
 // ────────────────────────────────────────────────────────────
@@ -114,6 +134,7 @@ export interface Device {
   iccid: string | null
   vehicle_id: number | null
   vehicle_license?: string | null
+  fleet_id: number | null
   created_at: string
   // runtime – from device_registry
   online: boolean

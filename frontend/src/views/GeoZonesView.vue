@@ -286,7 +286,7 @@ async function handleToggle(zone: GeoZone) {
           size="small"
           class="zone-table"
           highlight-current-row
-          @row-click="(row: GeoZone) => { if (!isDrawing.value) { highlightZone(row); const p = polygonMap.get(row.id); if (p) fitPolygon(p) } }"
+          @row-click="(row: GeoZone) => { if (!isDrawing) { highlightZone(row); const p = polygonMap.get(row.id); if (p) fitPolygon(p) } }"
         >
           <el-table-column label="名称" prop="name" min-width="90" show-overflow-tooltip />
           <el-table-column label="类型" width="80">
