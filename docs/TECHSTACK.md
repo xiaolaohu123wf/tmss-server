@@ -100,7 +100,7 @@ async def vehicle_stream(
 
 | 环境 | 命令 |
 | --- | --- |
-| 开发 | `uvicorn app.main:app --reload --port 8080` |
+| 开发 | `uvicorn app.main:app --reload --port 8900` |
 | 生产（单进程） | `uvicorn app.main:app --workers 1 --loop uvloop` |
 | 生产（多进程） | `gunicorn -k uvicorn.workers.UvicornWorker -w 2 app.main:app` |
 
@@ -121,11 +121,11 @@ from app.http.app import create_app
 
 async def main():
     # 启动 TCP 服务（非阻塞）
-    tcp_server = await start_tcp_server(host="0.0.0.0", port=9000)
+    tcp_server = await start_tcp_server(host="0.0.0.0", port=8901)
 
     # 启动 HTTP 服务
     http_app = create_app()
-    config = uvicorn.Config(http_app, host="0.0.0.0", port=8080, loop="none")
+    config = uvicorn.Config(http_app, host="0.0.0.0", port=8900, loop="none")
     server = uvicorn.Server(config)
     await server.serve()  # 阻塞直到退出
 
@@ -403,8 +403,8 @@ services:
   app:
     build: .
     ports:
-      - "9000:9000"   # TCP 设备接入
-      - "8080:8080"   # HTTP API
+      - "8901:8901"   # TCP 设备接入
+      - "8900:8900"   # HTTP API
     environment:
       - DATABASE_URL=postgresql://tmss:tmss@postgres:5432/tmss_db
       - REDIS_URL=redis://redis:6379/0

@@ -11,9 +11,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # 服务端口
-    tcp_port: int = 9000
-    http_port: int = 8080
+    # 服务端口（.env 优先；下方为无 .env 时的兜底默认值）
+    tcp_port: int = 8901
+    http_port: int = 8900
 
     # 数据库
     database_url: str = Field(min_length=1)

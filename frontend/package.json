@@ -1,0 +1,36 @@
+{
+  "name": "tmss-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bash dev.sh",
+    "build": "bash dev.sh build",
+    "preview": "bash dev.sh preview",
+    "lint": "eslint . --ext .vue,.ts,.tsx --fix"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0",
+    "pinia": "^2.1.0",
+    "axios": "^1.7.0",
+    "element-plus": "^2.7.0",
+    "@element-plus/icons-vue": "^2.3.0",
+    "@vueuse/core": "^10.10.0",
+    "echarts": "^5.5.0",
+    "vue-echarts": "^6.7.0",
+    "dayjs": "^1.11.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "vite": "^5.3.0",
+    "vue-tsc": "^2.0.0",
+    "typescript": "^5.4.0",
+    "unplugin-auto-import": "^0.17.0",
+    "unplugin-vue-components": "^0.27.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint-plugin-vue": "^9.25.0"
+  }
+}

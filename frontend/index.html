@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TMSS 车辆监控系统</title>
+    <!-- 高德地图 JS API 2.0，安全密钥通过 window._AMapSecurityConfig 设置 -->
+    <script>
+      window._AMapSecurityConfig = { securityJsCode: 'cc48ce721d87c8f2222dcd65624a6005' }
+      // 修复 AMap "willReadFrequently" canvas 性能警告
+      ;(function () {
+        const _get = HTMLCanvasElement.prototype.getContext
+        HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+          if (type === '2d') attrs = Object.assign({ willReadFrequently: true }, attrs)
+          return _get.call(this, type, attrs)
+        }
+      })()
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=91974428fa4957121585bd2d90d842d4&plugin=AMap.Scale,AMap.ToolBar,AMap.MouseTool,AMap.PolygonEditor"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

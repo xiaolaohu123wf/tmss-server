@@ -30,8 +30,8 @@
 ```mermaid
 flowchart TD
     subgraph entry [Entry Points]
-        TCP["TCP Listener :9000"]
-        HTTP["HTTP/ASGI :8080"]
+        TCP["TCP Listener :8901"]
+        HTTP["HTTP/ASGI :8900"]
     end
 
     subgraph protocol [Protocol Layer]
@@ -525,8 +525,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # 服务端口
-    tcp_port: int = 9000
-    http_port: int = 8080
+    tcp_port: int = 8901
+    http_port: int = 8900
 
     # 数据库
     database_url: str = Field(min_length=1)
