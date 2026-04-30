@@ -2,11 +2,17 @@ import { ref, onUnmounted } from 'vue'
 
 /**
  * Typed SSE composable.
- * - Automatically parses JSON payloads.
- * - Stops reconnecting on 4xx (e.g. 404 when backend Stage-7 is not yet deployed).
- * - Retries on transient network errors (max 10 times, 5s delay).
+ *
+ * @param url       SSE 端点 URL
+ * @param eventName 监听的命名事件（对应后端 `event: xxx\n` 字段）；
+ *                  不传则监听无名 `message` 事件。
+ *
+ * 特性：
+ * - 自动解析 JSON payload
+ * - 4xx 响应停止重连（如 404）
+ * - 网络错误最多重试 10 次，每次 5s 间隔
  */
-export function useSSE<T = unknown>(url: string) {
+export function useSSE<T = unknown>(url: string, eventName?: string) {
   const lastMessage = ref<T | null>(null)
   const status = ref<'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR'>('CONNECTING')
   const error = ref<string | null>(null)
@@ -17,22 +23,28 @@ export function useSSE<T = unknown>(url: string) {
   const RETRY_DELAY = 5000
   let retryTimer: ReturnType<typeof setTimeout> | null = null
 
+  function handleData(evt: MessageEvent) {
+    if (!evt.data) return
+    try {
+      lastMessage.value = JSON.parse(evt.data) as T
+    } catch {
+      // ignore non-JSON keep-alive frames
+    }
+  }
+
   function connect() {
-    // Use fetch to pre-check the endpoint — avoids EventSource swallowing 404 silently
+    // 预检端点避免 EventSource 静默吞 404
     fetch(url, { method: 'GET', credentials: 'include', headers: { Accept: 'text/event-stream' } })
       .then((res) => {
         if (res.status === 404 || res.status === 403 || res.status === 401) {
-          // Permanent client error — don't reconnect
           status.value = 'ERROR'
           error.value = `SSE endpoint not available (HTTP ${res.status})`
           console.warn(`[useSSE] ${url} → ${res.status}, reconnect disabled`)
           return
         }
-        // Endpoint exists — open real EventSource
         openEventSource()
       })
       .catch(() => {
-        // Network error during preflight — may recover, schedule retry
         scheduleRetry()
       })
   }
@@ -47,17 +59,17 @@ export function useSSE<T = unknown>(url: string) {
       error.value = null
     }
 
-    es.onmessage = (evt) => {
-      if (!evt.data) return
-      try {
-        lastMessage.value = JSON.parse(evt.data) as T
-      } catch {
-        // ignore non-JSON keep-alive frames
-      }
+    if (eventName) {
+      // 监听后端发出的命名事件（`event: location\n` 等）
+      es.addEventListener(eventName, handleData)
+    } else {
+      // 监听无名 message 事件
+      es.onmessage = handleData
     }
 
     es.onerror = () => {
       status.value = 'ERROR'
+      if (eventName) es?.removeEventListener(eventName, handleData)
       es?.close()
       es = null
       scheduleRetry()
@@ -77,14 +89,13 @@ export function useSSE<T = unknown>(url: string) {
 
   function close() {
     if (retryTimer) clearTimeout(retryTimer)
+    if (eventName) es?.removeEventListener(eventName, handleData)
     es?.close()
     es = null
     status.value = 'CLOSED'
   }
 
-  // Start
   connect()
-
   onUnmounted(close)
 
   return { lastMessage, status, error, close }

@@ -23,9 +23,9 @@ const { map, init: initMap, createMarker, setLayers } = useAmap('dashboard-map',
 // Marker registry: vehicleId → marker
 const markerMap = new Map<number, ReturnType<typeof createMarker>>()
 
-// SSE connections（后端 Stage-7 就绪前 status 会停在 ERROR，不会无限重试）
-const { lastMessage: locationFrame, status: locStatus, error: locError } = useSSE<VehiclePosition>('/api/stream/locations')
-const { lastMessage: alertFrame, status: alertStatus } = useSSE<AlertFrame>('/api/stream/alerts')
+// SSE 连接 — 统一端点 /api/stream，按命名事件类型分别订阅
+const { lastMessage: locationFrame, status: locStatus, error: locError } = useSSE<VehiclePosition>('/api/stream', 'location')
+const { lastMessage: alertFrame, status: alertStatus } = useSSE<AlertFrame>('/api/stream', 'alert')
 
 const sseReady = computed(() => locStatus.value === 'OPEN')
 
