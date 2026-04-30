@@ -802,6 +802,7 @@ tmss-server/
 │   │   │   ├── event_repo.py
 │   │   │   ├── work_session_repo.py
 │   │   │   ├── command_log_repo.py
+│   │   │   ├── track_query_repo.py   # 轨迹段查询 / 定位点拉取 / 删除
 │   │   │   └── user_repo.py
 │   │   └── queries/                  # SQL 字符串常量
 │   │       ├── location.py
@@ -816,7 +817,7 @@ tmss-server/
 │   │   └── debounce.py               # 告警防抖
 │   │
 │   ├── http/                         # HTTP Entry
-│   │   ├── app.py                    # create_app() 工厂
+│   │   ├── app.py                    # create_app() 工厂；首次启动自动创建 admin/admin123
 │   │   ├── deps.py                   # require_auth 等
 │   │   ├── error_handler.py          # 全局异常处理
 │   │   ├── response.py               # ok() 封装
@@ -828,7 +829,9 @@ tmss-server/
 │   │       ├── router_events.py
 │   │       ├── router_users.py
 │   │       ├── router_admin.py
-│   │       └── router_stream.py      # SSE
+│   │       ├── router_track_segments.py  # 轨迹段 CRUD + GCJ-02 坐标转换
+│   │       ├── router_tcp_messages.py    # 调试：TCP 原始消息环形缓冲
+│   │       └── router_stream.py          # SSE
 │   │
 │   ├── tcp/                          # TCP Entry
 │   │   ├── server.py                 # asyncio.start_server
@@ -954,7 +957,33 @@ repos:
 
 ---
 
-## 附录 B：版本与维护
+## 附录 B：坐标转换约定
+
+坐标系与转换职责统一规定如下：
+
+| 数据流向 | 坐标系 | 处理位置 |
+|----------|--------|----------|
+| 设备上报 → DB `location_point` | WGS-84 原始存储 | TCP Handler 直接写入，不转换 |
+| DB `location_point` → HTTP 返回前端 | GCJ-02（AMap） | **HTTP 路由层**（`router_track_segments.py`）调用 `wgs84_to_gcj02()` |
+| 前端围栏绘制 → DB `geo_zone` | GCJ-02（高德 SDK 直接输出） | 直接存储，无需转换 |
+| 服务层围栏判定（geofence_service） | 操作前将 WGS-84 GPS 点转为 GCJ-02 再与围栏比较 | Service 层 |
+
+> **说明**：`wgs84_to_gcj02` 函数定义在 `app/services/geofence_service.py`，被 Service 层和路由层共享调用。  
+> 路由层调用属于「展示层坐标适配」，不违反分层原则；如后续坐标转换逻辑复杂化，可提取为独立 `CoordService`。
+
+---
+
+## 附录 C：已知架构偏差与解释
+
+| 偏差 | 位置 | 原因 / 说明 |
+|------|------|-------------|
+| 路由层调用 `wgs84_to_gcj02` | `router_track_segments.py` | 展示层坐标适配，逻辑简单（纯数学），无 I/O，可接受 |
+| `full_state_handler` 直接更新 DB | `tcp/handlers/full_state_handler.py` | ICCID 补全为单次幂等 SQL，未抽 Service，因逻辑简单未引入额外层 |
+| `track_query_repo` 含 TABLESAMPLE | `db/repos/track_query_repo.py` | 定位点最多 25000 条降采样为 SQL 特性，在 Repo 层实现符合规范 |
+
+---
+
+## 附录 D：版本与维护
 
 - 本文档随后端代码一起演进，重大架构调整需更新本文档并在 PR 中明确标注 `[ARCH]` 前缀
 - 新成员入职第一周必须通读本文档

@@ -29,6 +29,7 @@ export default defineConfig({
     include: ['vue', 'vue-router', 'pinia', 'axios', 'dayjs', '@vueuse/core', 'element-plus/es'],
   },
   server: {
+    host: '0.0.0.0',
     port: 5173,
     proxy: {
       '/api': {

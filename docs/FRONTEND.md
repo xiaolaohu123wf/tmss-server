@@ -50,54 +50,59 @@ window._AMapSecurityConfig = { securityJsCode: '你的安全密钥' }
 frontend/
 ├── src/
 │   ├── api/                   # HTTP 请求模块
-│   │   ├── index.ts           # axios 实例 + 统一响应解析
+│   │   ├── index.ts           # axios 实例 + 统一响应解析（ok/code/message）
 │   │   ├── auth.ts            # 登录 / 登出 / 当前用户
-│   │   ├── vehicles.ts        # 车辆 CRUD + 绑定
-│   │   ├── devices.ts         # 设备管理 + 指令下发
+│   │   ├── vehicles.ts        # 车辆 CRUD + 绑定；normalizeVehicle 修复 Decimal→number
+│   │   ├── devices.ts         # 设备管理 + 指令下发 + 删除
 │   │   ├── geoZones.ts        # 围栏 CRUD
 │   │   ├── events.ts          # 事件查询（分页）
+│   │   ├── tracks.ts          # 轨迹段查询 / 定位点获取 / 管理员删除
 │   │   ├── users.ts           # 用户管理（manager only）
 │   │   └── fleets.ts          # 车队管理（manager only）
 │   │
 │   ├── composables/
-│   │   ├── useAmap.ts         # 高德地图封装（初始化 / Marker / Polygon / 绘制）
-│   │   └── useSSE.ts          # SSE 订阅封装（@vueuse/core + JSON 解析）
+│   │   ├── useAmap.ts         # 高德地图封装（初始化 / Marker / Polygon / Polyline / 绘制）
+│   │   └── useSSE.ts          # SSE 订阅封装（@vueuse/core + JSON 解析 + 自动重连）
 │   │
 │   ├── components/
+│   │   ├── TabBar.vue             # 多标签页组件（keep-alive 路由缓存）
 │   │   ├── VehicleStatusTag.vue   # 作业状态 Tag（颜色区分）
+│   │   ├── DeviceStatusTag.vue    # 设备在线/离线 Tag
 │   │   ├── EventTypeTag.vue       # 事件类型 Tag
 │   │   ├── GeoZoneTypeTag.vue     # 围栏类型 Tag
 │   │   └── DeviceOnlineBadge.vue  # 设备在线/离线徽章
 │   │
 │   ├── layouts/
-│   │   ├── AuthLayout.vue     # 登录页居中布局
-│   │   └── MainLayout.vue     # 主布局（深色侧边栏 + 顶栏 + 内容区）
+│   │   ├── AuthLayout.vue     # 登录页：浅蓝科技渐变背景 + 浮动光晕
+│   │   └── MainLayout.vue     # 主布局（深色侧边栏 + 顶栏 + TabBar + 内容区）
 │   │
 │   ├── router/
 │   │   └── index.ts           # vue-router 4 + 权限守卫
 │   │
 │   ├── stores/
-│   │   ├── auth.ts            # 登录态、角色、fleet_id
-│   │   └── dashboard.ts       # 实时车辆位置 Map + 告警队列
+│   │   ├── auth.ts            # 登录态、角色、fleet_id、isManager
+│   │   └── tabs.ts            # 多标签页状态（openTab / closeTab / cachedNames）
 │   │
 │   ├── types/
 │   │   └── index.ts           # TS 类型定义（与后端 Pydantic 模型对齐）
+│   │                          # VehicleType = 'truck'|'loader'|'passenger_car'|'other'
 │   │
 │   ├── views/
-│   │   ├── LoginView.vue      # 登录页
+│   │   ├── LoginView.vue      # 登录页（浅蓝/水滴图标/系统名称）
 │   │   ├── DashboardView.vue  # 实时大屏（地图 + SSE + 告警）
-│   │   ├── VehiclesView.vue   # 车辆管理
-│   │   ├── DevicesView.vue    # 设备管理
+│   │   ├── VehiclesView.vue   # 车辆管理（含家用车型/驾驶员姓名）
+│   │   ├── DevicesView.vue    # 设备管理（管理员可删除）
 │   │   ├── GeoZonesView.vue   # 围栏管理（含地图绘制）
 │   │   ├── EventsView.vue     # 事件查询
+│   │   ├── TracksView.vue     # 历史轨迹查询与回放（AMap Polyline + 管理员删除）
 │   │   ├── UsersView.vue      # 用户管理
 │   │   ├── FleetsView.vue     # 车队管理
 │   │   └── SettingsView.vue   # 系统设置（二次验证）
 │   │
-│   ├── App.vue                # 根组件（按路由 meta 切换 Layout）
+│   ├── App.vue                # 根组件（scrollbar-gutter 全局样式）
 │   └── main.ts                # 入口（注册 Element Plus、Pinia、Router）
 │
-├── index.html                 # 挂载高德地图 JS API 脚本
+├── index.html                 # 高德地图 JS API + willReadFrequently canvas 修复
 ├── vite.config.ts             # Vite + 自动导入 + 代理配置
 ├── tsconfig.json
 └── package.json
@@ -111,10 +116,11 @@ frontend/
 |------|------|----------|----------|
 | `/login` | `LoginView` | 全部 | 账号密码登录，Cookie Session |
 | `/dashboard` | `DashboardView` | 全部已登录 | 实时地图 + SSE 位置/告警 + 在线车辆列表 |
-| `/vehicles` | `VehiclesView` | 全部已登录 | 车辆列表 CRUD + 绑定/解绑设备 |
-| `/devices` | `DevicesView` | 全部已登录 | 设备列表 + 在线状态 + 手动下发指令 |
+| `/vehicles` | `VehiclesView` | 全部已登录 | 车辆列表 CRUD + 绑定/解绑设备 + 家用车型 |
+| `/devices` | `DevicesView` | 全部已登录 | 设备列表 + 在线状态 + 手动下发指令（manager 可删除）|
 | `/geo-zones` | `GeoZonesView` | 全部已登录 | 高德地图绘制多边形 + 围栏 CRUD |
 | `/events` | `EventsView` | 全部已登录 | 事件分页查询（时间/类型/车辆过滤）|
+| `/tracks` | `TracksView` | 全部已登录 | 历史轨迹查询 + 地图回放 + 速度滑块（manager 可删除段）|
 | `/users` | `UsersView` | **manager only** | 用户 CRUD + 角色/车队分配 |
 | `/fleets` | `FleetsView` | **manager only** | 车队 CRUD |
 | `/settings` | `SettingsView` | **manager only** | 业务参数配置（**需二次密码验证**）|
@@ -250,15 +256,16 @@ await post('/admin/config', config.value, {
 | P3 | 围栏管理（含地图绘制）+ 事件查询 | ✅ 完成 |
 | P4 | 用户管理 + 车队管理 + 系统设置 | ✅ 完成 |
 | P5 | 实时大屏（地图 + SSE + 告警）| ✅ 完成 |
-| P6 | 历史轨迹回放（ECharts 速度图 + 时间轴）| ⬜ 待开发 |
-| P7 | SSE 后端（阶段 7）完成后对接联调 | ⬜ 待后端 |
+| P6 | 历史轨迹查询（AMap Polyline + 回放 + GCJ-02 + 管理员删除）| ✅ 完成 |
+| P7 | SSE 联调 + TabBar 多标签页 + 性能优化 | ✅ 完成 |
+| P8 | 登录页重设计（科技蓝主题 + 水滴图标 + 系统名称）| ✅ 完成 |
 
 ---
 
 ## 九、待完善事项
 
-1. **历史轨迹回放**：`DashboardView` 中增加轨迹回放抽屉，用 `AMap.Polyline` + 时间轴控件，联动 ECharts 速度折线图
-2. **ECharts 统计面板**：大屏右侧增加作业状态分布饼图、今日告警趋势折线图
-3. **围栏管理地图坐标同步**：编辑已有围栏时，在地图上高亮显示当前围栏并支持拖拽修改顶点
-4. **SSE 联调**：待后端阶段 7 完成 `router_stream.py` 后，与大屏 SSE 对接测试
-5. **nginx 配置**：生产环境 `nginx.conf` 反向代理 `/api` → 后端 `:8080`，前端静态资源直接服务
+1. **ECharts 统计面板**：大屏右侧增加作业状态分布饼图、今日告警趋势折线图
+2. **围栏管理地图坐标同步**：编辑已有围栏时，在地图上高亮显示当前围栏并支持拖拽修改顶点
+3. **nginx 配置**：生产环境 `nginx.conf` 反向代理 `/api` → 后端 `:8900`，前端静态资源直接服务
+4. **SSE 前端对接完善**：测试多设备并发下 SSE 断线重连后车辆位置的一致性
+5. **历史轨迹 ECharts 速度图**：`TracksView` 底部增加速度折线图，与时间轴联动

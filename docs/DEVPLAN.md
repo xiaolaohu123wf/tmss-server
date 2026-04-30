@@ -27,14 +27,15 @@
 阶段 4  HTTP 管理 API  ██████████  ✅ 完成    CRUD 接口 + 数据隔离
 阶段 5  TCP 服务基础   ██████████  ✅ 完成    设备接入 + 心跳 + 时间/天气
 阶段 6  业务逻辑核心   ██████████  ✅ 完成    超速/围栏/状态机/指令下发
-阶段 7  实时推送       ░░░░░░░░░░  ⬜ 待开发  EventBus + SSE 路由
+阶段 7  实时推送       ██████████  ✅ 完成    EventBus + SSE 路由
 阶段 8  后台任务       ██████████  ✅ 完成    心跳扫描 + 分区自动创建（手动）
-阶段 9  前端基础       ░░░░░░░░░░  ⬜ 待开发  Vue 骨架 + 登录 + 管理页
-阶段 10 大屏           ░░░░░░░░░░  ⬜ 待开发  高德地图 + SSE + ECharts
+阶段 9  前端基础       ██████████  ✅ 完成    Vue 骨架 + 登录 + 管理页
+阶段 10 大屏           ██████████  ✅ 完成    高德地图 + SSE + 实时大屏
+阶段 11 历史轨迹查询   ██████████  ✅ 完成    轨迹回放 + GCJ-02 转换 + 管理员删除
+阶段 12 系统完善       ██████████  ✅ 完成    家用车型 / ICCID 补全 / UI 科技化
 ```
 
-> **关键依赖链**：阶段 1 → 2 → 3 → 4（并行启动 5）→ 6 → 7 → 8 → 9 → 10  
-> 阶段 4 和阶段 5 在阶段 3 完成后可并行开发。
+> **关键依赖链**：阶段 1 → 2 → 3 → 4（并行启动 5）→ 6 → 7 → 8 → 9 → 10 → 11 → 12
 
 ---
 
@@ -259,23 +260,22 @@ pytest tests/tcp/test_gps_handler.py -v
 
 ---
 
-## 阶段 7：实时推送（SSE）
+## 阶段 7：实时推送（SSE）✅
 
 **目标**：前端可通过 SSE 接收实时定位帧与告警事件。
 
-> 依赖阶段 6（`EventBus.publish` 调用已在 gps_handler 中）。
-
 ### 任务清单
 
-- [ ] `app/core/event_bus.py` — `EventBus`（参考 `ARCHITECTURE.md §2.2`）；订阅者队列 `maxsize=200`，超出丢弃最旧
-- [ ] `app/http/routers/router_stream.py` — SSE 接口：
+- [x] `app/core/event_bus.py` — `EventBus`（参考 `ARCHITECTURE.md §2.2`）；订阅者队列 `maxsize=200`，超出丢弃最旧
+- [x] `app/http/routers/router_stream.py` — SSE 接口：
   - `GET /api/stream/locations` — 订阅 `location:{fleet_id}` 或 `location:all`
   - `GET /api/stream/alerts` — 订阅 `alert:{fleet_id}` 或 `alert:all`
+- [x] `app/http/routers/router_tcp_messages.py` — 调试接口：TCP 原始收发消息环形缓冲查询
 
 ### 验收标准
 
 ```bash
-# 手动测试：curl -N --cookie "tmss_session=xxx" http://localhost:8080/api/stream/locations
+# ✅ curl -N --cookie "tmss_session=xxx" http://localhost:8900/api/stream/locations
 # 预期：设备发送 GPS 包后，SSE 流实时收到 data: {...}
 ```
 
@@ -303,54 +303,127 @@ pytest tests/tcp/test_gps_handler.py -v
 
 ---
 
-## 阶段 9：前端基础
+## 阶段 9：前端基础 ✅
 
 **目标**：管理后台可用（登录、车辆/设备/围栏管理、事件查询）。
 
 ### 任务清单
 
-- [ ] `frontend/` Vue 3 + Vite + TypeScript + Element Plus 骨架
-- [ ] `vue-router` 路由：登录页 / 仪表盘 / 车辆管理 / 设备管理 / 围栏管理 / 事件查询 / 用户管理
-- [ ] `pinia` stores：`useAuthStore`（session）、`useVehicleStore`、`useEventStore`
-- [ ] `axios` 封装：统一 `{ ok, data/code/message }` 响应解析
-- [ ] 权限路由守卫：未登录跳转 `/login`；`fleet_captain` 隐藏系统设置
-- [ ] 登录页面
-- [ ] 车辆管理页（列表 + 新增/编辑/删除 + 绑定设备）
-- [ ] 围栏管理页（高德地图绘制多边形 + 列表）
-- [ ] 事件查询页（时间范围过滤 + 分页）
-- [ ] `nginx.conf` 反向代理配置
+- [x] `frontend/` Vue 3 + Vite + TypeScript + Element Plus 骨架
+- [x] `vue-router` 路由：登录页 / 仪表盘 / 车辆管理 / 设备管理 / 围栏管理 / 事件查询 / 用户管理 / 轨迹查询
+- [x] `pinia` stores：`useAuthStore`（session）、`useTabsStore`
+- [x] `axios` 封装：统一 `{ ok, data/code/message }` 响应解析
+- [x] 权限路由守卫：未登录跳转 `/login`；`fleet_captain` 隐藏系统设置
+- [x] 登录页面（浅蓝科技主题，水滴图标，系统名称：姚家平水利枢纽土方运输智能管控系统）
+- [x] 车辆管理页（列表 + 新增/编辑/删除 + 绑定设备 + 家用车型不填载重）
+- [x] 围栏管理页（高德地图绘制多边形 + 列表）
+- [x] 事件查询页（时间范围过滤 + 分页）
+- [x] 设备管理页（管理员可删除设备 + 同步注销内存注册）
+- [x] 用户管理、车队管理、系统设置页
+- [x] `TabBar` 多标签页组件（keep-alive 保留状态）
 
 ### 验收标准
 
 ```bash
-# 手动测试：manager 登录后可见全部车辆；fleet_captain 登录后只见本车队车辆
-# 手动测试：新增车辆 → 列表出现；删除车辆 → 列表消失
+# ✅ manager 登录后可见全部车辆；fleet_captain 登录后只见本车队车辆
+# ✅ 新增车辆 → 列表出现；删除车辆 → 列表消失
+# ✅ 多标签页切换，每个页面状态独立保留
 ```
 
 ---
 
-## 阶段 10：大屏
+## 阶段 10：大屏 ✅
 
 **目标**：实时大屏可用（车辆地图 + 状态统计 + 告警列表）。
 
-> 依赖阶段 7（SSE 推送）+ 阶段 9（前端骨架）。
-
 ### 任务清单
 
-- [ ] 大屏路由 `/dashboard`
-- [ ] 高德地图初始化 + `AMap.Marker` 车辆图标（按作业状态颜色区分）
-- [ ] SSE 接入（`@vueuse/core useEventSource`）→ 实时更新 `AMap.Marker` 位置
-- [ ] 围栏 `AMap.Polygon` 叠加层
-- [ ] 告警弹窗（收到 `alert:*` 事件时触发）
-- [ ] ECharts 统计面板：在线车辆数、今日告警数、作业状态分布饼图
-- [ ] 历史轨迹回放：`AMap.Polyline` + 时间轴控件
-- [ ] manager 看全部车辆，fleet_captain 看本车队车辆（前端自动过滤）
+- [x] 大屏路由 `/dashboard`
+- [x] 高德地图初始化 + `AMap.Marker` 车辆图标（按作业状态颜色区分）
+- [x] SSE 接入（`useSSE` composable）→ 实时更新 `AMap.Marker` 位置
+- [x] 围栏 `AMap.Polygon` 叠加层
+- [x] 告警弹窗（收到 `alert:*` 事件时触发）
+- [x] 在线车辆列表、今日告警列表侧边栏
+- [x] manager 看全部车辆，fleet_captain 看本车队车辆（前端自动过滤）
 
 ### 验收标准
 
 ```bash
-# 手动测试：设备发送 GPS 包 → 地图上车辆图标位置实时移动
-# 手动测试：超速 → 地图上出现告警弹窗 + ECharts 告警数 +1
+# ✅ 设备发送 GPS 包 → 地图上车辆图标位置实时移动
+# ✅ 超速 → 页面出现告警弹窗
+```
+
+---
+
+## 阶段 11：历史轨迹查询 ✅
+
+**目标**：管理后台可查询、回放历史轨迹，管理员可删除异常轨迹段。
+
+### 任务清单
+
+**后端**
+- [x] `app/db/repos/track_query_repo.py` — `TrackQueryRepo`：
+  - `list_segments` — 按车辆/时间范围分页查询轨迹段，从起止定位点取 `loc_type` 用于坐标系判断
+  - `get_points` — 获取段内定位点（最多 25 000 点，TABLESAMPLE 降采样）
+  - `delete_segment` — 管理员硬删除轨迹段及其定位点（事务）
+- [x] `app/http/routers/router_track_segments.py` — 轨迹段 API：
+  - `GET /api/track-segments` — 查询轨迹段列表（`require_auth`）
+  - `GET /api/track-segments/{id}/points` — 获取定位点（`require_auth`）
+  - `DELETE /api/track-segments/{id}` — 删除轨迹段（`require_manager`）
+  - WGS-84 → GCJ-02 坐标转换（GPS 定位点经 `wgs84_to_gcj02` 转换后返回，LBS 直接使用）
+
+**前端**
+- [x] `frontend/src/api/tracks.ts` — 轨迹 API 客户端（list / points / delete）
+- [x] `frontend/src/views/TracksView.vue` — 历史轨迹查询与回放：
+  - 时间 + 车牌过滤，轨迹段列表
+  - 点击行加载定位点，AMap.Polyline 绘制 + AMap.Marker 起止点
+  - 回放控制（播放/暂停/速度/时间轴滑块）
+  - 渐进式逆地理编码（`requestIdleCallback` 后台补全地址，不阻塞 UI）
+  - 选中行 300ms 过渡动画（`trackStageRevealed` + opacity transition）
+  - 管理员显示"删除"按钮，确认后软删除并从列表移除
+  - 性能优化：`shallowRef`、折线简化（MAX_POLYLINE_VERTICES=480）、`setFitView(immediately=true)`
+
+### 验收标准
+
+```bash
+# ✅ 选择时间范围 → 轨迹列表加载
+# ✅ 点击轨迹行 → 地图绘制折线 + 起止点 Marker + 300ms 过渡动画
+# ✅ 管理员点击删除 → 确认弹窗 → 删除成功 → 从列表移除
+# ✅ 折线与路网对齐（GCJ-02 坐标）
+```
+
+---
+
+## 阶段 12：系统完善 ✅
+
+**目标**：功能细节打磨、稳定性修复、UI 优化。
+
+### 任务清单
+
+**车辆管理**
+- [x] 新增车型"家用车"（`passenger_car`）：选择此车型时自动清除载重字段，后端 Pydantic validator + SQL CASE 双重保障
+- [x] 修复 `ElInputNumber` 收到字符串型 `load_capacity`（后端 Decimal → JSON string）导致 prop 类型警告：前端 `normalizeVehicle` 函数转换
+- [x] 车辆新增/编辑支持驾驶员姓名字段（`driver_name`，V002 迁移）
+
+**TCP 协议解析**
+- [x] `FullStatePacket` 新增 `AliasChoices` 支持设备短字段名映射（`ic→iccid`、`q→signal_strength`、`vb→battery_voltage`、`dt→report_time`）
+- [x] ICCID 自动补全：首次收到含 `ic` 字段的全量包时自动写入 DB（`PATCH_ICCID_IF_EMPTY_SQL` 幂等更新，不覆盖已有值）
+
+**设备管理**
+- [x] 管理员可删除设备：HTTP DELETE 同时触发内存 `DeviceRegistry` 注销（unbind + unregister）
+
+**前端 UI**
+- [x] 登录页全面重设计：浅蓝科技渐变背景（网格底纹 + 浮动光晕）、磨砂玻璃卡片、水滴主题图标
+- [x] 系统名称更改为"姚家平水利枢纽土方运输智能管控系统"（英文副标题 Truck Monitoring System Simplify 保持不变）
+- [x] 修复 Element Plus MessageBox 弹出时底图偏移：`scrollbar-gutter: stable` 全局样式 + `lockScroll: false`
+
+### 验收标准
+
+```bash
+# ✅ 选择家用车型 → 载重输入框隐藏 → 保存后 load_capacity=NULL
+# ✅ 设备发送含 ic 字段全量包 → DB iccid 字段自动补全
+# ✅ 管理员删除设备 → DB 软删除 + 内存注销
+# ✅ 打开删除确认弹窗 → 背景地图无偏移
 ```
 
 ---
@@ -380,7 +453,9 @@ pytest tests/tcp/test_gps_handler.py -v
 | 4 HTTP API | `models/http_*.py` `services/*_service.py` `http/routers/` | `pytest tests/http/` 全绿 |
 | 5 TCP 基础 | `tcp/` `models/tcp_packets.py` `core/device_registry.py` | 设备接入 + 心跳集成测试 |
 | 6 业务逻辑 | `services/alert_service.py` `geofence_service.py` 等 | `pytest tests/services/` 全绿 |
-| 7 SSE | `core/event_bus.py` `router_stream.py` | curl SSE 接收实时帧 |
-| 8 后台任务 | `tasks/` | 90s 离线检测自动触发 |
-| 9 前端 | `frontend/` | 管理后台可正常使用 |
-| 10 大屏 | `frontend/views/Dashboard.vue` | 实时地图 + 告警弹窗 |
+| 7 SSE | `core/event_bus.py` `router_stream.py` | curl SSE 接收实时帧 ✅ |
+| 8 后台任务 | `tasks/` | 90s 离线检测自动触发 ✅ |
+| 9 前端 | `frontend/` | 管理后台可正常使用 ✅ |
+| 10 大屏 | `frontend/views/DashboardView.vue` | 实时地图 + 告警弹窗 ✅ |
+| 11 轨迹查询 | `router_track_segments.py` `track_query_repo.py` `TracksView.vue` | 轨迹回放 + 折线与路网对齐 ✅ |
+| 12 系统完善 | `tcp_packets.py` `full_state_handler.py` `LoginView.vue` 等 | 家用车型/ICCID 补全/UI 重设计 ✅ |

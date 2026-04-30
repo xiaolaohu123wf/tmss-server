@@ -1,7 +1,8 @@
 # TMSS 技术栈选型
 
-> **语言已确认：Python 3.12+**，配合完整的类型体系与 asyncio 纪律。  
-> 本文档记录所有层的最终选型与理由，可直接用于指导工程骨架搭建。
+> **语言选型：Python 3.11**（服务器预装版本，`/usr/bin/python3.11`），配合完整的类型体系与 asyncio 纪律。  
+> 本文档记录所有层的最终选型与理由，可直接用于指导工程骨架搭建。  
+> 实际运行环境：Python 3.11，文档中标注的 3.12+ 特性暂不使用（如 `tomllib` 内置等），但代码语法完全兼容。
 
 ---
 
@@ -9,7 +10,7 @@
 
 | 层 | 选型 | 关键包 |
 | --- | --- | --- |
-| 服务端语言 | **Python 3.12+** | 内置 asyncio |
+| 服务端语言 | **Python 3.11**（服务器实际版本） | 内置 asyncio |
 | HTTP 框架 | **FastAPI 0.111+** | fastapi, uvicorn, uvloop |
 | TCP 服务 | **asyncio 内置** | asyncio.start_server |
 | 数据库驱动 | **asyncpg 0.29+** | asyncpg |
@@ -644,7 +645,21 @@ tmss-server/
 
 ---
 
-## 十、工作量估算
+## 十、已实际使用的关键特性备注
+
+| 特性 | 位置 | 说明 |
+|------|------|------|
+| Pydantic `AliasChoices` | `models/tcp_packets.py` | 设备短字段名（`ic`→`iccid`、`q`→`signal_strength`）映射 |
+| Pydantic `model_validator(mode="after")` | `models/http_vehicle.py` | `passenger_car` 类型自动清空 `load_capacity` |
+| asyncpg `TABLESAMPLE SYSTEM` | `db/repos/track_query_repo.py` | 大段定位点降采样，最多返回 25000 条 |
+| FastAPI `StreamingResponse` | `routers/router_stream.py` | SSE 实时推送定位与告警事件 |
+| `scrollbar-gutter: stable` | `frontend/src/App.vue` | 防止 Element Plus 弹窗补 `padding-right` 导致地图偏移 |
+| `requestIdleCallback` / `requestAnimationFrame` | `TracksView.vue` | 渐进式逆地理编码，不阻塞主线程 |
+| Vue `shallowRef` | `TracksView.vue` | 大量定位点数组避免深度响应式开销 |
+
+---
+
+## 十一、工作量估算
 
 | 阶段 | 主要工作 | 估计耗时 |
 | --- | --- | --- |

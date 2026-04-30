@@ -115,8 +115,9 @@ CREATE TABLE vehicle (
   id            BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   fleet_id      BIGINT,                                -- FK fleet.id，所属车队
   license_plate VARCHAR(20)  NOT NULL,                -- 车牌号
-  vehicle_type  VARCHAR(30)  NOT NULL DEFAULT '',     -- 车型（如 重型自卸车）
-  load_capacity NUMERIC(8,2),                         -- 额定载重(吨)
+  vehicle_type  VARCHAR(30)  NOT NULL DEFAULT '',     -- 车型：truck/loader/passenger_car/other
+  load_capacity NUMERIC(8,2),                         -- 额定载重(吨)；passenger_car 时强制 NULL
+  driver_name   VARCHAR(50),                          -- 驾驶员姓名（V002 迁移新增）
   notes         TEXT,
   deleted_at    TIMESTAMPTZ,
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -132,6 +133,9 @@ CREATE TRIGGER trg_vehicle_updated_at
   BEFORE UPDATE ON vehicle
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
+
+> **`vehicle_type` 合法值**：`truck`（货车）、`loader`（装载机）、`passenger_car`（家用车）、`other`（其他）。  
+> `passenger_car` 类型的 `load_capacity` 在服务层强制置 `NULL`（Pydantic `model_validator` + SQL `CASE` 双重保障）。
 
 ---
 
@@ -454,6 +458,7 @@ CREATE TABLE command_log (
   source       cmd_source_t NOT NULL DEFAULT 'auto',  -- 触发来源
   operator_id  BIGINT,                                -- FK app_user.id，手动下发时记录
   event_id     BIGINT,                                -- FK event.id，关联触发事件
+  speed_kmh    NUMERIC(8,2),                          -- 下发时车速(km/h)（V003 迁移新增）
   is_delivered BOOLEAN      NOT NULL DEFAULT FALSE,   -- 是否成功发送到设备
   sent_at      TIMESTAMPTZ  NOT NULL,                 -- 发送时间
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -567,6 +572,31 @@ track_segment                                 │
 event                                         │
  └─ command_log.event_id                      │
 ```
+
+---
+
+## 数据库迁移版本历史
+
+| 版本 | 文件 | 变更内容 |
+|------|------|----------|
+| V001 | `V001__init_schema.py` | 初始建表：全部基础表 + 触发器 + 索引 |
+| V002 | `V002__add_vehicle_driver_name.py` | `vehicle` 表新增 `driver_name VARCHAR(50)` |
+| V003 | `V003__command_log_speed.py` | `command_log` 表新增 `speed_kmh NUMERIC(8,2)` |
+
+> 执行 `alembic upgrade head` 应用全部迁移。新增字段均使用 `IF NOT EXISTS`，可安全重复执行。
+
+---
+
+## 坐标系使用约定
+
+| 位置 | 坐标系 | 说明 |
+|------|--------|------|
+| `location_point.lat/lng` | **WGS-84** | 设备 GPS 原始上报；LBS 基站定位亦为 WGS-84 |
+| `track_segment.start_lat/lng`、`end_lat/lng` | **WGS-84** | 数据库存储原始坐标 |
+| `geo_zone.coordinates` | **GCJ-02** | 前端高德地图绘制后直接存储 |
+| API 返回给前端的坐标 | **GCJ-02** | 路由层调用 `wgs84_to_gcj02()`（`geofence_service`）后返回 |
+
+> **约定**：坐标转换统一在 HTTP 路由层（`router_track_segments.py`）执行，DB 中始终存 WGS-84，不做双写。
 
 ---
 

@@ -46,7 +46,7 @@ async function handleLogin() {
               </defs>
             </svg>
           </div>
-          <h1 class="sys-title">姚家坪水利枢纽</h1>
+          <h1 class="sys-title">姚家平水利枢纽</h1>
           <h1 class="sys-title">土方运输智能管控系统</h1>
           <p class="sys-subtitle">Truck Monitoring System Simplify</p>
         </div>
