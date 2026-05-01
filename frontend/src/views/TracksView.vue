@@ -216,7 +216,9 @@ async function onRowClick(row: TrackRow, _col: unknown, evt: Event) {
   playing.value = false
   stopPlayTimer()
   try {
-    const pts = await tracksApi.points(row.id, 25000)
+    const raw = await tracksApi.points(row.id, 25000)
+    // LBS 基站定位精度差，不参与轨迹回放
+    const pts = raw.filter((p) => p.loc_type !== 'lbs')
     points.value = pts
     playIndex.value = 0
     await nextTick()
@@ -330,16 +332,18 @@ function stopPlayTimer() {
 function startPlayTimer() {
   stopPlayTimer()
   if (points.value.length < 2) return
+  // 每帧固定 80ms；高倍速时通过跳帧（step > 1）保证播放速度
+  const FRAME_MS = 80
   const base = 350
-  const ms = Math.max(80, base / playbackRate.value)
+  const step = Math.max(1, Math.round(playbackRate.value / (base / FRAME_MS)))
   playTimer = setInterval(() => {
     if (playIndex.value >= sliderMax.value) {
       playing.value = false
       stopPlayTimer()
       return
     }
-    playIndex.value++
-  }, ms)
+    playIndex.value = Math.min(playIndex.value + step, sliderMax.value)
+  }, FRAME_MS)
 }
 
 watch(playing, (p) => {
@@ -486,6 +490,11 @@ onUnmounted(() => {
                   <el-option label="1×" :value="1" />
                   <el-option label="2×" :value="2" />
                   <el-option label="4×" :value="4" />
+                  <el-option label="8×" :value="8" />
+                  <el-option label="16×" :value="16" />
+                  <el-option label="30×" :value="30" />
+                  <el-option label="60×" :value="60" />
+                  <el-option label="120×" :value="120" />
                 </el-select>
               </div>
               <div v-if="points.length" class="pb-meta muted">
