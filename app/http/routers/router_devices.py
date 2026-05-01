@@ -215,7 +215,6 @@ async def update_device_metadata(
     await _repo.update_metadata(
         conn,
         device_id,
-        firmware_version=body.firmware_version.strip() or None,
         iccid=body.iccid.strip() or None,
     )
     return ok({"message": "设备信息已更新"})

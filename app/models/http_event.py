@@ -57,8 +57,7 @@ class DeviceCreate(BaseModel):
 
 
 class DeviceMetadataUpdate(BaseModel):
-    """设备管理页编辑固件、ICCID"""
-    firmware_version: str = ""
+    """设备管理页编辑 ICCID（固件版本由设备开机上报，不允许手动修改）"""
     iccid: str = ""
 
 

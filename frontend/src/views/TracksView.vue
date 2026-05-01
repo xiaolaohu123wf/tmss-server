@@ -415,7 +415,12 @@ onUnmounted(() => {
             <template #default="{ row }">
               <div class="cell-stack">
                 <span>{{ formatChinaDateTime(row.started_at) }}</span>
-                <span class="muted">至 {{ row.ended_at ? formatChinaDateTime(row.ended_at) : '进行中' }}</span>
+                <template v-if="row.ended_at">
+                  <span class="muted">至 {{ formatChinaDateTime(row.ended_at) }}</span>
+                </template>
+                <template v-else>
+                  <el-tag type="success" size="small" effect="plain">进行中</el-tag>
+                </template>
               </div>
             </template>
           </el-table-column>

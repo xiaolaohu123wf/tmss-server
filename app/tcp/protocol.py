@@ -5,6 +5,7 @@ import re
 from typing import Optional, Union
 
 _IMEI_RE = re.compile(r"\b(\d{14,15})\b")
+_FV_RE = re.compile(r"^\{fv:([0-9]+(?:\.[0-9]+)*)\}$")
 
 # 协议中精简字段名 → 标准字段名
 _TYPE_MAP: dict[str, str] = {"g": "gps", "b": "lbs"}
@@ -53,6 +54,11 @@ def parse_frame(raw: bytes) -> Optional[Union[str, dict, bytes]]:
     # DTU「HEX 心跳 00」常发两字节 ASCII 0x30,0x30，与单字节 NUL 等同视为心跳
     if text == "00":
         return raw
+
+    # 固件版本上报：{fv:1.0.1}
+    m = _FV_RE.match(text)
+    if m:
+        return {"type": "firmware_version", "version": m.group(1)}
 
     # 纯 ASCII 命令
     lower = text.lower()

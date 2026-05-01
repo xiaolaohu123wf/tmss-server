@@ -55,11 +55,18 @@ async def get_or_advance_segment(
     now = recorded_at
 
     if state.current_segment_id is None:
-        # 服务重启后从 DB 恢复开放段
+        # 服务重启或短暂断线重连后，从 DB 恢复开放段
         existing = await _ts_repo.find_open_by_device(conn, state.device_id)
         if existing:
             state.current_segment_id = existing.id
-            state.last_point_at = existing.started_at
+            # 取该段最后一个定位点的时间，作为时间差计算基准
+            # （不能用 started_at，否则 Rule 2 会把整段历史时间都算进去）
+            last_ts = await conn.fetchval(
+                "SELECT recorded_at FROM location_point"
+                " WHERE segment_id = $1 ORDER BY recorded_at DESC LIMIT 1",
+                existing.id,
+            )
+            state.last_point_at = last_ts if last_ts is not None else existing.started_at
 
     need_new = False
 

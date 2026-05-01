@@ -93,6 +93,7 @@ class ConnectionHandler:
         self._writer = writer
         self._device_id: Optional[int] = None
         self._imei: Optional[str] = None
+        self._pending_fw_version: Optional[str] = None  # 注册前收到的固件版本，注册后落库
         peer = writer.get_extra_info("peername")
         self._peer = f"{peer[0]}:{peer[1]}" if peer else "unknown"
 
@@ -177,6 +178,11 @@ class ConnectionHandler:
             await self._handle_gps(parsed)
             return
 
+        # 固件版本上报：{fv:1.0.1}
+        if msg_type == "firmware_version":
+            await self._handle_firmware_version(parsed.get("version", ""))
+            return
+
         # 全量状态包（含 imei 字段）
         if "imei" in parsed:
             await self._handle_full_state(parsed)
@@ -210,6 +216,10 @@ class ConnectionHandler:
             self._device_id = device_id
             self._imei = imei
             await logger.ainfo("device_online", device_id=device_id, imei=imei, peer=self._peer)
+            # 注册前已收到固件版本上报，现在落库
+            if self._pending_fw_version:
+                await self._save_firmware_version(self._pending_fw_version)
+                self._pending_fw_version = None
 
         if device_id and login_ack:
             ack = b"ok"
@@ -260,6 +270,30 @@ class ConnectionHandler:
         except Exception as exc:
             await logger.aerror("full_state_handler_error", device_id=self._device_id, error=str(exc))
 
+    async def _handle_firmware_version(self, version: str) -> None:
+        if not version:
+            return
+        if self._device_id is None:
+            # 设备尚未注册（Lua 注册包还没到），暂存，注册后落库
+            self._pending_fw_version = version
+            await logger.adebug("firmware_version_pending", peer=self._peer, version=version)
+            return
+        await self._save_firmware_version(version)
+
+    async def _save_firmware_version(self, version: str) -> None:
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                from app.db.repos.device_repo import DeviceRepo
+                await DeviceRepo().update_firmware(conn, self._device_id, version)
+            await logger.ainfo(
+                "firmware_version_updated",
+                device_id=self._device_id,
+                version=version,
+            )
+        except Exception as exc:
+            await logger.aerror("firmware_version_update_error", device_id=self._device_id, error=str(exc))
+
     async def _cleanup(self) -> None:
         if self._device_id is not None:
             # 记录断线时间戳（TTL 1h），用于注册时判断是否需要重发欢迎语
@@ -267,8 +301,9 @@ class ConnectionHandler:
                 await disconnect_cache.record(get_redis(), self._device_id)
             except Exception:
                 pass
-            # 断线前先关闭开放的轨迹段（以最后已知点为结束点）
-            await self._close_open_segment_on_disconnect()
+            # 注意：断线时不主动关闭轨迹段。
+            # 短暂断线（< park_threshold_min）重连后应续接同一段；
+            # 真正的超时段由 segment_sweeper_loop 每 5 分钟扫描关闭。
             await event_bus.publish("device_state", {
                 "event": "device_state",
                 "type": "disconnected",
@@ -283,35 +318,3 @@ class ConnectionHandler:
             pass
         await logger.ainfo("tcp_disconnected", peer=self._peer, device_id=self._device_id)
 
-    async def _close_open_segment_on_disconnect(self) -> None:
-        """TCP 断线时，若存在开放轨迹段则以最后已知点为结束点关闭。"""
-        state = await device_registry.get(self._device_id)  # type: ignore[arg-type]
-        if state is None or state.current_segment_id is None or state.last_point_at is None:
-            return
-        # 取内存中最后一个 GPS 点的坐标
-        last_pt = state.recent_points[-1] if state.recent_points else None
-        if last_pt is None:
-            return
-        try:
-            from app.db.repos.track_segment_repo import TrackSegmentRepo
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                await TrackSegmentRepo().close_segment(
-                    conn,
-                    segment_id=state.current_segment_id,
-                    ended_at=state.last_point_at,
-                    end_lat=last_pt.lat,
-                    end_lng=last_pt.lng,
-                )
-            state.current_segment_id = None
-            await logger.ainfo(
-                "track_segment_closed_on_disconnect",
-                device_id=self._device_id,
-                segment_id=state.current_segment_id,
-            )
-        except Exception as exc:
-            await logger.aerror(
-                "close_segment_on_disconnect_error",
-                device_id=self._device_id,
-                error=str(exc),
-            )

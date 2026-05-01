@@ -28,11 +28,12 @@ const myDevices = computed(() =>
 // ── 弹窗状态 ───────────────────────────────────────────────────────────────────
 const createVisible = ref(false)
 const createFormRef = ref<FormInstance>()
-const createForm = ref({ imei: '', firmware_version: '' })
+const createForm = ref({ imei: '' })
 
 const editVisible = ref(false)
 const editDeviceId = ref<number | null>(null)
-const editForm = ref({ firmware_version: '', iccid: '' })
+const editCurrentFirmware = ref('')
+const editForm = ref({ iccid: '' })
 const editLoading = ref(false)
 
 const commandVisible = ref(false)
@@ -82,7 +83,7 @@ onMounted(loadData)
 // ── 管理员：创建设备 ───────────────────────────────────────────────────────────
 async function handleCreate() {
   try { await createFormRef.value!.validate() } catch { return }
-  await devicesApi.create({ imei: createForm.value.imei, firmware_version: createForm.value.firmware_version || undefined })
+  await devicesApi.create({ imei: createForm.value.imei })
   ElMessage.success('设备已添加')
   createVisible.value = false
   await loadData()
@@ -91,7 +92,8 @@ async function handleCreate() {
 // ── 编辑 ───────────────────────────────────────────────────────────────────────
 function openEdit(device: Device) {
   editDeviceId.value = device.id
-  editForm.value = { firmware_version: device.firmware_version ?? '', iccid: device.iccid ?? '' }
+  editCurrentFirmware.value = device.firmware_version ?? '—'
+  editForm.value = { iccid: device.iccid ?? '' }
   editVisible.value = true
 }
 
@@ -99,7 +101,7 @@ async function handleEditSave() {
   if (!editDeviceId.value) return
   editLoading.value = true
   try {
-    await devicesApi.update(editDeviceId.value, { firmware_version: editForm.value.firmware_version, iccid: editForm.value.iccid })
+    await devicesApi.update(editDeviceId.value, { iccid: editForm.value.iccid })
     ElMessage.success('已保存')
     editVisible.value = false
     await loadData()
@@ -322,7 +324,7 @@ async function onTabChange(pane: { paneName: string }) {
           <el-input v-model="createForm.imei" placeholder="15 位 IMEI 码" maxlength="15" />
         </el-form-item>
         <el-form-item label="固件版本">
-          <el-input v-model="createForm.firmware_version" placeholder="可选" />
+          <el-text type="info" size="small">设备开机后自动上报</el-text>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -335,7 +337,8 @@ async function onTabChange(pane: { paneName: string }) {
     <el-dialog v-model="editVisible" title="编辑设备" width="440px">
       <el-form label-width="100px">
         <el-form-item label="固件版本">
-          <el-input v-model="editForm.firmware_version" placeholder="如 1.0.0" clearable />
+          <span style="font-size:13px;color:#606266">{{ editCurrentFirmware }}</span>
+          <el-text type="info" size="small" style="margin-left:8px">由设备开机自动上报</el-text>
         </el-form-item>
         <el-form-item label="ICCID">
           <el-input v-model="editForm.iccid" placeholder="SIM 卡 ICCID" clearable maxlength="22" />
