@@ -51,22 +51,57 @@ async def get_or_advance_segment(
     """
     返回当前有效的 segment_id（int）。
     副作用：更新 state.current_segment_id、state.last_point_at、驻留锚点。
+    使用 state.segment_lock 保证同一设备并发 GPS 包不会重复开段。
     """
+    async with state.segment_lock:
+        return await _get_or_advance_segment_locked(
+            state, lat, lng, recorded_at, conn, park_threshold_min
+        )
+
+
+async def _get_or_advance_segment_locked(
+    state: DeviceState,
+    lat: float,
+    lng: float,
+    recorded_at: datetime,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+    park_threshold_min: int,
+) -> int:
     now = recorded_at
 
     if state.current_segment_id is None:
         # 服务重启或短暂断线重连后，从 DB 恢复开放段
         existing = await _ts_repo.find_open_by_device(conn, state.device_id)
         if existing:
-            state.current_segment_id = existing.id
-            # 取该段最后一个定位点的时间，作为时间差计算基准
-            # （不能用 started_at，否则 Rule 2 会把整段历史时间都算进去）
-            last_ts = await conn.fetchval(
-                "SELECT recorded_at FROM location_point"
-                " WHERE segment_id = $1 ORDER BY recorded_at DESC LIMIT 1",
-                existing.id,
-            )
-            state.last_point_at = last_ts if last_ts is not None else existing.started_at
+            if existing.vehicle_id == state.vehicle_id:
+                # 车辆绑定未变，续接旧段
+                state.current_segment_id = existing.id
+                # 取该段最后一个定位点的时间，作为时间差计算基准
+                # （不能用 started_at，否则 Rule 2 会把整段历史时间都算进去）
+                last_ts = await conn.fetchval(
+                    "SELECT recorded_at FROM location_point"
+                    " WHERE segment_id = $1 ORDER BY recorded_at DESC LIMIT 1",
+                    existing.id,
+                )
+                state.last_point_at = last_ts if last_ts is not None else existing.started_at
+            else:
+                # 车辆绑定已变更，关闭旧段，下方逻辑会开新段
+                end_lat = existing.start_lat or lat
+                end_lng = existing.start_lng or lng
+                await _ts_repo.close_segment(
+                    conn,
+                    segment_id=existing.id,
+                    ended_at=now,
+                    end_lat=end_lat,
+                    end_lng=end_lng,
+                )
+                await logger.ainfo(
+                    "track_segment_closed_vehicle_changed",
+                    device_id=state.device_id,
+                    segment_id=existing.id,
+                    old_vehicle_id=existing.vehicle_id,
+                    new_vehicle_id=state.vehicle_id,
+                )
 
     need_new = False
 

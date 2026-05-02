@@ -40,6 +40,8 @@ class DeviceState:
     # 作业状态机：当前驻留区的进入时刻 (用于 dwell 计算)
     zone_entry_at: Optional[datetime] = None
     zone_entry_id: Optional[int] = None   # 正在计时驻留的 zone_id
+    # 防止短暂重连期间两个连接并发开段（asyncio 协作式，Lock 足够）
+    segment_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class DeviceRegistry:
@@ -61,6 +63,16 @@ class DeviceRegistry:
     ) -> DeviceState:
         async with self._lock:
             now = datetime.utcnow()
+            existing = self._devices.get(device_id)
+            if existing is not None:
+                # 设备重连（旧连接尚未清理或短暂断线）：只更新连接相关字段，
+                # 保留轨迹段状态（current_segment_id / last_point_at / 驻留锚点）
+                # 以及车辆绑定（vehicle_id 由 update_binding 管理，不被注册覆盖）。
+                existing.writer = writer
+                existing.last_heartbeat_at = now
+                self._by_imei[imei] = device_id
+                await logger.ainfo("device_reconnected", device_id=device_id, imei=imei)
+                return existing
             state = DeviceState(
                 device_id=device_id,
                 imei=imei,
@@ -123,6 +135,13 @@ class DeviceRegistry:
         state.vehicle_id = vehicle_id
         state.fleet_id = fleet_id
         state.license_plate = license_plate
+        # 车辆绑定发生变化，重置轨迹段指针：
+        # 下一个 GPS 包到达时，旧段会被正确关闭并以新 vehicle_id 开启新段。
+        state.current_segment_id = None
+        state.last_point_at = None
+        state.stationary_anchor_lat = None
+        state.stationary_anchor_lng = None
+        state.stationary_since = None
         await logger.ainfo(
             "device_binding_updated",
             device_id=device_id,
@@ -140,7 +159,13 @@ class DeviceRegistry:
             state.writer.write(cmd)
             await state.writer.drain()
             return True
-        except Exception:
+        except Exception as exc:
+            await logger.awarning(
+                "send_command_failed",
+                device_id=device_id,
+                cmd=cmd[:40],
+                error=str(exc),
+            )
             return False
 
 

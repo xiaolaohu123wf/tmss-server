@@ -172,9 +172,6 @@ class ConnectionHandler:
 
         # GPS 定位包（高频简包）
         if msg_type in ("gps", "lbs") and "lat" in parsed:
-            # 未注册但帧内携带 imei → 先完成隐式注册，再处理本帧定位
-            if self._device_id is None and parsed.get("imei"):
-                await self._handle_register({"imei": parsed["imei"]}, raw)
             await self._handle_gps(parsed)
             return
 
@@ -228,8 +225,6 @@ class ConnectionHandler:
             await self._writer.drain()
 
     async def _handle_gps(self, obj: dict) -> None:
-        if self._device_id is None:
-            return
         from app.models.tcp_packets import GpsPacket
         try:
             packet = GpsPacket(
@@ -238,18 +233,39 @@ class ConnectionHandler:
                 speed=float(obj["speed"]) if obj.get("speed") is not None else None,
                 altitude=float(obj["altitude"]) if obj.get("altitude") is not None else None,
             )
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError) as exc:
+            await logger.awarning("gps_packet_parse_error", peer=self._peer, device_id=self._device_id, error=str(exc), keys=list(obj.keys()))
             return
 
-        state = await device_registry.get(self._device_id)
+        # 新固件每包携带 imei：优先按 imei 查找/注册，确保 GPS 点始终归属正确设备。
+        # 回退到连接级缓存（旧固件兼容）。
+        raw_imei = obj.get("imei")
+        if raw_imei:
+            normalized = _normalize_module_imei(str(raw_imei))
+            state = await device_registry.get_by_imei(normalized)
+            if state is None:
+                # 设备尚未注册，触发一次性注册
+                await self._handle_register({"imei": normalized}, normalized.encode())
+                state = await device_registry.get_by_imei(normalized)
+            if state is not None and self._device_id is None:
+                # 更新连接级缓存，后续心跳/全量包可复用
+                self._device_id = state.device_id
+                self._imei = normalized
+        else:
+            if self._device_id is None:
+                await logger.awarning("gps_no_imei_no_device_id", peer=self._peer)
+                return
+            state = await device_registry.get(self._device_id)
+
         if state is None:
+            await logger.awarning("gps_state_not_found", peer=self._peer, device_id=self._device_id, imei=raw_imei)
             return
 
         handler = await _get_gps_handler()
         try:
             await handler.handle(state, packet)
         except Exception as exc:
-            await logger.aerror("gps_handler_error", device_id=self._device_id, error=str(exc))
+            await logger.awarning("gps_handler_error", device_id=state.device_id, error=str(exc))
 
     async def _handle_full_state(self, obj: dict) -> None:
         # 若设备尚未注册，从 imei 字段自动触发注册流程
@@ -268,7 +284,7 @@ class ConnectionHandler:
         try:
             await _full_state_handler.handle(state, FullStatePacket.model_validate(obj))
         except Exception as exc:
-            await logger.aerror("full_state_handler_error", device_id=self._device_id, error=str(exc))
+            await logger.awarning("full_state_handler_error", device_id=self._device_id, error=str(exc))
 
     async def _handle_firmware_version(self, version: str) -> None:
         if not version:
@@ -299,8 +315,8 @@ class ConnectionHandler:
             # 记录断线时间戳（TTL 1h），用于注册时判断是否需要重发欢迎语
             try:
                 await disconnect_cache.record(get_redis(), self._device_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                await logger.awarning("disconnect_cache_error", device_id=self._device_id, error=str(exc))
             # 注意：断线时不主动关闭轨迹段。
             # 短暂断线（< park_threshold_min）重连后应续接同一段；
             # 真正的超时段由 segment_sweeper_loop 每 5 分钟扫描关闭。

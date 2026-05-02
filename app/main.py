@@ -17,7 +17,7 @@ structlog.configure(
     logger_factory=structlog.stdlib.LoggerFactory(),
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = structlog.get_logger()
 
 

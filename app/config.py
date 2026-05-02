@@ -41,5 +41,8 @@ class Settings(BaseSettings):
     session_secret: SecretStr = Field(min_length=16)
     bcrypt_cost: int = 12
 
+    # 日志级别：DEBUG / INFO / WARNING / ERROR
+    log_level: str = "INFO"
+
 
 settings = Settings()  # type: ignore[call-arg]

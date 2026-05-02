@@ -85,4 +85,4 @@ async def segment_sweeper_loop() -> None:
         try:
             await close_stale_segments_once()
         except Exception as exc:
-            await logger.aerror("segment_sweeper_error", error=str(exc))
+            await logger.awarning("segment_sweeper_error", error=str(exc))

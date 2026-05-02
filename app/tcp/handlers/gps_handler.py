@@ -85,6 +85,12 @@ class GpsHandler:
     ) -> None:
         fleet_id = state.fleet_id or 0
 
+        # 速度推送优先（OLED 实时显示）：与后续 DB/告警操作完全解耦，
+        # 确保即使 DB 抖动或告警处理异常也不影响设备侧速度更新。
+        if packet.speed is not None:
+            speed_msg = "{{v:{:.1f}}}".format(packet.speed).encode("ascii")
+            await self._registry.send_command(state.device_id, speed_msg)
+
         # 1. 内存轨迹点
         await self._registry.push_point(state.device_id, packet)
 
@@ -181,11 +187,6 @@ class GpsHandler:
             loading_dwell_min=self._loading_min,
             unloading_dwell_min=self._unloading_min,
         )
-
-        # 9. 速度推送 → OLED 实时显示（协议：{v:XX.X}，无换行）
-        if packet.speed is not None:
-            speed_msg = "{{v:{:.1f}}}".format(packet.speed).encode("ascii")
-            await self._registry.send_command(state.device_id, speed_msg)
 
         # 10. 实时推送（SSE）
         location_payload = {
