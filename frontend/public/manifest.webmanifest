@@ -1,0 +1,37 @@
+{
+  "name": "姚家平水利枢纽管控系统",
+  "short_name": "TMSS",
+  "description": "土方运输车辆实时监控管理平台",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#001529",
+  "theme_color": "#1890ff",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "实时大屏",
+      "url": "/dashboard",
+      "description": "查看车辆实时位置"
+    },
+    {
+      "name": "事件告警",
+      "url": "/events",
+      "description": "查看超速越界等告警记录"
+    }
+  ],
+  "categories": ["transportation", "utilities"]
+}

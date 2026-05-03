@@ -120,6 +120,20 @@ async function handleLogin() {
   overflow: hidden;
 }
 
+/* 手机：卡片全宽，去掉圆角，撑满屏幕 */
+@media (max-width: 480px) {
+  .login-wrapper { align-items: flex-start; }
+  .login-card {
+    width: 100vw;
+    min-height: 100dvh;
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
+  }
+  .card-body { padding: 32px 24px 40px; }
+  .sys-title { font-size: 18px; }
+}
+
 /* 顶部蓝色装饰条 */
 .card-top-bar {
   height: 4px;

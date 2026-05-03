@@ -20,5 +20,19 @@ const route = useRoute()
 <style>
 html {
   scrollbar-gutter: stable;
+  /* 手机：使用动态视口高度，避免浏览器地址栏影响布局 */
+  height: -webkit-fill-available;
 }
+body {
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+  /* 禁止移动端长按选中文字（地图/按钮操作体验更好） */
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 允许输入框正常选中文字 */
+input, textarea { -webkit-user-select: text; user-select: text; }
+
+/* Element Plus 表格、表单等内容区允许选中 */
+.el-table, .el-form { -webkit-user-select: text; user-select: text; }
 </style>

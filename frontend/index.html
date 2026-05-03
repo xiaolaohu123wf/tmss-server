@@ -2,10 +2,25 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- ── PWA 基础 ───────────────────────────────────────── -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1890ff" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- ── iOS PWA ───────────────────────────────────────── -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TMSS" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.svg" />
+
+    <!-- ── 基本 meta ─────────────────────────────────────── -->
+    <meta name="description" content="姚家平水利枢纽土方运输智能管控系统" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <title>姚家平水利枢纽土方运输智能管控系统</title>
-    <!-- 高德地图 JS API 2.0，安全密钥通过 window._AMapSecurityConfig 设置 -->
+
+    <!-- ── 高德地图 JS API 2.0 ─────────────────────────── -->
     <script>
       window._AMapSecurityConfig = { securityJsCode: 'cc48ce721d87c8f2222dcd65624a6005' }
       // 修复 AMap "willReadFrequently" canvas 性能警告
@@ -18,6 +33,15 @@
       })()
     </script>
     <script src="https://webapi.amap.com/maps?v=2.0&key=91974428fa4957121585bd2d90d842d4&plugin=AMap.Scale,AMap.ToolBar,AMap.MouseTool,AMap.PolygonEditor,AMap.Geocoder"></script>
+
+    <!-- ── Service Worker 注册 ───────────────────────────── -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {})
+        })
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>
