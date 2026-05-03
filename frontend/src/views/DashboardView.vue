@@ -1,6 +1,15 @@
 <script setup lang="ts">
 defineOptions({ name: 'DashboardView' })
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+
+// ── 移动端检测 ─────────────────────────────────────────────
+const isMobile = ref(window.innerWidth <= 768)
+function _onResize() { isMobile.value = window.innerWidth <= 768 }
+onMounted(() => window.addEventListener('resize', _onResize))
+onUnmounted(() => window.removeEventListener('resize', _onResize))
+
+// 手机端底部列表面板（null=关闭，'vehicles'=在线车辆，'alerts'=告警记录）
+const mobileActivePanel = ref<'vehicles' | 'alerts' | null>(null)
 import { ElNotification } from 'element-plus'
 import { useAmap } from '@/composables/useAmap'
 import { useSSE } from '@/composables/useSSE'
@@ -234,54 +243,54 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="dashboard-page">
-    <!-- SSE 状态提示（后端 Stage-7 未就绪时显示） -->
+  <div class="dashboard-page" :class="{ 'dashboard-page--mobile': isMobile }">
+
+    <!-- SSE 状态提示 -->
     <el-alert
       v-if="locStatus === 'ERROR'"
-      :title="`实时推送暂不可用：${locError ?? 'SSE 接口未就绪（后端阶段 7 待开发）'}`"
+      :title="`实时推送暂不可用：${locError ?? 'SSE 接口未就绪'}`"
       type="warning"
       :closable="false"
       show-icon
-      style="margin-bottom: 8px; flex-shrink: 0"
+      style="flex-shrink:0"
     />
 
-    <!-- Top stat bar -->
+    <!-- ══════════════════ 统计栏（PC + 手机共用）══════════════════ -->
     <div class="stat-bar">
       <div class="stat-item">
         <span class="stat-value">{{ dashboardStore.onlineCount }}</span>
-        <span class="stat-label">在线车辆</span>
+        <span class="stat-label">在线</span>
       </div>
       <div class="stat-divider" />
       <div class="stat-item">
-        <span class="stat-value" style="color: #fa8c16">{{ stateStats.loading }}</span>
-        <span class="stat-label">装料中</span>
+        <span class="stat-value" style="color:#fa8c16">{{ stateStats.loading }}</span>
+        <span class="stat-label">装料</span>
       </div>
       <div class="stat-item">
-        <span class="stat-value" style="color: #52c41a">{{ stateStats.unloading }}</span>
-        <span class="stat-label">卸料中</span>
+        <span class="stat-value" style="color:#52c41a">{{ stateStats.unloading }}</span>
+        <span class="stat-label">卸料</span>
       </div>
       <div class="stat-item">
-        <span class="stat-value" style="color: #f5222d">{{ stateStats.transport_loaded }}</span>
-        <span class="stat-label">重载运输</span>
+        <span class="stat-value" style="color:#f5222d">{{ stateStats.transport_loaded }}</span>
+        <span class="stat-label">重载</span>
       </div>
       <div class="stat-item">
-        <span class="stat-value" style="color: #1890ff">{{ stateStats.transport_empty }}</span>
-        <span class="stat-label">空载运输</span>
+        <span class="stat-value" style="color:#1890ff">{{ stateStats.transport_empty }}</span>
+        <span class="stat-label">空载</span>
       </div>
       <div class="stat-divider" />
       <div class="stat-item">
-        <span class="stat-value" style="color: #f5222d">{{ dashboardStore.alerts.length }}</span>
-        <span class="stat-label">今日告警</span>
+        <span class="stat-value" style="color:#f5222d">{{ dashboardStore.alerts.length }}</span>
+        <span class="stat-label">告警</span>
       </div>
     </div>
 
-    <!-- Main content -->
+    <!-- ══════════════════ 地图 + 图层切换 + 图例（共用）══════════════════ -->
     <div class="main-content">
-      <!-- Map -->
       <div class="map-wrapper">
         <div id="dashboard-map" class="amap-container" />
 
-        <!-- Layer switcher -->
+        <!-- 图层切换 -->
         <div class="layer-switcher">
           <button
             v-for="opt in LAYER_OPTIONS"
@@ -291,13 +300,13 @@ onUnmounted(() => {
             @click="switchLayer(opt.key)"
           >
             <span class="layer-icon">{{ opt.icon }}</span>
-            <span class="layer-label">{{ opt.label }}</span>
+            <span v-if="!isMobile" class="layer-label">{{ opt.label }}</span>
           </button>
         </div>
 
-        <!-- Legend -->
-        <div class="map-legend">
-          <div class="legend-title">图例</div>
+        <!-- 图例（手机上折叠，仅显示色块） -->
+        <div class="map-legend" :class="{ 'map-legend--compact': isMobile }">
+          <div v-if="!isMobile" class="legend-title">图例</div>
           <div
             v-for="(color, state) in STATE_COLORS"
             :key="state"
@@ -309,13 +318,13 @@ onUnmounted(() => {
               <circle cx="7" cy="21" r="3" fill="#222"/>
               <circle cx="24" cy="21" r="3" fill="#222"/>
             </svg>
-            <VehicleStatusTag :state="(state as WorkState)" />
+            <VehicleStatusTag v-if="!isMobile" :state="(state as WorkState)" />
           </div>
         </div>
       </div>
 
-      <!-- Side panel: vehicle list + alert log -->
-      <div class="side-panel">
+      <!-- ── PC 侧边面板（手机隐藏）─────────────────────────── -->
+      <div v-if="!isMobile" class="side-panel">
         <el-tabs>
           <el-tab-pane label="在线车辆">
             <div class="vehicle-list">
@@ -332,9 +341,7 @@ onUnmounted(() => {
                   <span class="speed-text">{{ pos.speed?.toFixed(1) ?? '0' }} km/h</span>
                 </div>
               </div>
-              <div v-if="!dashboardStore.positionList.length" class="empty-hint">
-                暂无在线车辆
-              </div>
+              <div v-if="!dashboardStore.positionList.length" class="empty-hint">暂无在线车辆</div>
             </div>
           </el-tab-pane>
 
@@ -353,20 +360,37 @@ onUnmounted(() => {
                   {{ alert.license_plate ?? `设备${alert.device_id}` }} — {{ alert.message }}
                 </div>
               </div>
-              <div v-if="!dashboardStore.alerts.length" class="empty-hint">
-                暂无告警记录
-              </div>
+              <div v-if="!dashboardStore.alerts.length" class="empty-hint">暂无告警记录</div>
             </div>
           </el-tab-pane>
         </el-tabs>
       </div>
     </div>
 
-    <!-- Vehicle detail drawer -->
+    <!-- ══════════════════ 手机端：可点击信息卡片 ══════════════════ -->
+    <div v-if="isMobile" class="mobile-cards">
+      <button class="mobile-card" @click="mobileActivePanel = 'vehicles'">
+        <div class="mc-count">{{ dashboardStore.onlineCount }}</div>
+        <div class="mc-label">
+          <el-icon size="14"><Van /></el-icon>在线车辆
+        </div>
+        <el-icon class="mc-arrow" size="14"><ArrowRight /></el-icon>
+      </button>
+      <button class="mobile-card mobile-card--alert" @click="mobileActivePanel = 'alerts'">
+        <div class="mc-count" style="color:#f5222d">{{ dashboardStore.alerts.length }}</div>
+        <div class="mc-label">
+          <el-icon size="14"><Bell /></el-icon>今日告警
+        </div>
+        <el-icon class="mc-arrow" size="14"><ArrowRight /></el-icon>
+      </button>
+    </div>
+
+    <!-- ══════════════════ 车辆详情抽屉（PC + 手机共用）══════════════════ -->
     <el-drawer
       v-model="detailPanelVisible"
       title="车辆详情"
-      size="320px"
+      :size="isMobile ? '60%' : '320px'"
+      :direction="isMobile ? 'btt' : 'rtl'"
       :append-to-body="false"
     >
       <template v-if="selectedVehicle">
@@ -374,7 +398,7 @@ onUnmounted(() => {
           <el-descriptions-item label="车牌">
             {{ selectedVehicle.license_plate ?? `设备 ${selectedVehicle.device_id}` }}
           </el-descriptions-item>
-          <el-descriptions-item label="作业状态">
+          <el-descriptions-item label="状态">
             <VehicleStatusTag :state="selectedVehicle.work_state" />
           </el-descriptions-item>
           <el-descriptions-item label="速度">
@@ -385,21 +409,74 @@ onUnmounted(() => {
           </el-descriptions-item>
           <el-descriptions-item label="经度">{{ selectedVehicle.lng }}</el-descriptions-item>
           <el-descriptions-item label="纬度">{{ selectedVehicle.lat }}</el-descriptions-item>
-          <el-descriptions-item label="最后更新">
+          <el-descriptions-item label="更新时间">
             {{ formatChinaDateTime(selectedVehicle.recorded_at) }}
           </el-descriptions-item>
         </el-descriptions>
       </template>
     </el-drawer>
+
+    <!-- ══════════════════ 手机端：底部列表抽屉 ══════════════════ -->
+    <el-drawer
+      v-if="isMobile"
+      :model-value="mobileActivePanel !== null"
+      :title="mobileActivePanel === 'vehicles' ? '在线车辆' : '告警记录'"
+      direction="btt"
+      size="55%"
+      :append-to-body="true"
+      @close="mobileActivePanel = null"
+    >
+      <!-- 在线车辆列表 -->
+      <template v-if="mobileActivePanel === 'vehicles'">
+        <div class="vehicle-list">
+          <div
+            v-for="pos in dashboardStore.positionList"
+            :key="pos.vehicle_id ?? pos.device_id"
+            class="vehicle-item"
+            @click="() => { selectedVehicle = pos; detailPanelVisible = true; mobileActivePanel = null }"
+          >
+            <div class="vehicle-plate">{{ pos.license_plate ?? `设备${pos.device_id}` }}</div>
+            <div class="vehicle-meta">
+              <VehicleStatusTag :state="pos.work_state" />
+              <span class="speed-text">{{ pos.speed?.toFixed(1) ?? '0' }} km/h</span>
+            </div>
+          </div>
+          <div v-if="!dashboardStore.positionList.length" class="empty-hint">暂无在线车辆</div>
+        </div>
+      </template>
+
+      <!-- 告警记录列表 -->
+      <template v-if="mobileActivePanel === 'alerts'">
+        <div class="alert-list">
+          <div
+            v-for="(alert, idx) in dashboardStore.alerts"
+            :key="idx"
+            class="alert-item"
+          >
+            <div class="alert-header">
+              <EventTypeTag :type="alert.event_type" />
+              <span class="alert-time">{{ formatChinaDateTime(alert.created_at) }}</span>
+            </div>
+            <div class="alert-body">
+              {{ alert.license_plate ?? `设备${alert.device_id}` }} — {{ alert.message }}
+            </div>
+          </div>
+          <div v-if="!dashboardStore.alerts.length" class="empty-hint">暂无告警记录</div>
+        </div>
+      </template>
+    </el-drawer>
+
   </div>
 </template>
 
 <style scoped>
+/* ══ PC 基础（不变）══════════════════════════════════════════ */
 .dashboard-page {
   display: flex;
   flex-direction: column;
   gap: 12px;
   height: calc(100vh - 116px);
+  padding: 0;
 }
 
 .stat-bar {
@@ -457,7 +534,6 @@ onUnmounted(() => {
   height: 100%;
 }
 
-/* Layer switcher – top right corner of map */
 .layer-switcher {
   position: absolute;
   top: 12px;
@@ -485,25 +561,10 @@ onUnmounted(() => {
   line-height: 1;
 }
 
-.layer-btn:hover {
-  background: rgba(255, 255, 255, 0.98);
-  border-color: #409eff;
-}
-
-.layer-btn.active {
-  background: #409eff;
-  border-color: #409eff;
-  color: #fff;
-}
-
-.layer-icon {
-  font-size: 16px;
-}
-
-.layer-label {
-  font-size: 11px;
-  white-space: nowrap;
-}
+.layer-btn:hover { background: rgba(255, 255, 255, 0.98); border-color: #409eff; }
+.layer-btn.active { background: #409eff; border-color: #409eff; color: #fff; }
+.layer-icon { font-size: 16px; }
+.layer-label { font-size: 11px; white-space: nowrap; }
 
 .map-legend {
   position: absolute;
@@ -519,18 +580,15 @@ onUnmounted(() => {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-.legend-title {
-  font-size: 11px;
-  color: #909399;
-  font-weight: 600;
-  margin-bottom: 2px;
+.map-legend--compact {
+  flex-direction: row;
+  padding: 6px 8px;
+  gap: 4px;
+  bottom: 12px;
 }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.legend-title { font-size: 11px; color: #909399; font-weight: 600; margin-bottom: 2px; }
+.legend-item { display: flex; align-items: center; gap: 8px; }
 
 .side-panel {
   width: 320px;
@@ -556,54 +614,117 @@ onUnmounted(() => {
 }
 
 .vehicle-item:hover,
-.vehicle-item.selected {
-  background: #e6f4ff;
+.vehicle-item.selected { background: #e6f4ff; }
+
+.vehicle-plate { font-weight: 600; font-size: 14px; color: #1d2129; }
+.vehicle-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.speed-text { font-size: 12px; color: #86909c; }
+
+.alert-item { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }
+.alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.alert-time { font-size: 11px; color: #86909c; }
+.alert-body { font-size: 13px; color: #555; }
+
+.empty-hint { padding: 24px; text-align: center; color: #86909c; font-size: 14px; }
+
+/* ══ 手机端覆盖 ═══════════════════════════════════════════ */
+.dashboard-page--mobile {
+  /* 手机内容区无标签栏，仅减去顶栏 56px；用 dvh 适配浏览器地址栏 */
+  height: calc(100dvh - 56px);
+  gap: 0;
+  overflow: hidden;
 }
 
-.vehicle-plate {
-  font-weight: 600;
-  font-size: 14px;
-  color: #1d2129;
+/* 手机统计栏：紧凑横向 */
+.dashboard-page--mobile .stat-bar {
+  padding: 8px 12px;
+  gap: 0;
+  border-radius: 0;
+  border-bottom: 1px solid #f0f0f0;
+  justify-content: space-around;
 }
 
-.vehicle-meta {
+.dashboard-page--mobile .stat-item { min-width: 0; flex: 1; }
+
+.dashboard-page--mobile .stat-value {
+  font-size: 18px;
+}
+
+.dashboard-page--mobile .stat-label {
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.dashboard-page--mobile .stat-divider {
+  height: 28px;
+  flex-shrink: 0;
+}
+
+/* 手机地图区：flex:1 撑满剩余空间（stat-bar + mobile-cards 之外） */
+.dashboard-page--mobile .main-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.dashboard-page--mobile .map-wrapper {
+  border-radius: 0;
+  width: 100%;
+}
+
+/* 图层切换按钮手机上只显示图标 */
+.dashboard-page--mobile .layer-btn {
+  padding: 5px 7px;
+}
+
+/* ══ 手机端快捷卡片 ══════════════════════════════════════ */
+.mobile-cards {
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  border-top: 1px solid #e8e8e8;
+  background: #fff;
+}
+
+.mobile-card {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  border-right: 1px solid #f0f0f0;
 }
 
-.speed-text {
-  font-size: 12px;
-  color: #86909c;
+.mobile-card:last-child { border-right: none; }
+.mobile-card:active { background: #f5f5f5; }
+
+.mc-count {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1890ff;
+  line-height: 1;
+  min-width: 28px;
 }
 
-.alert-item {
-  padding: 10px 8px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.alert-header {
+.mc-label {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.alert-time {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   font-size: 11px;
   color: #86909c;
 }
 
-.alert-body {
-  font-size: 13px;
-  color: #555;
-}
+.mc-label .el-icon { color: #1890ff; }
+.mobile-card--alert .mc-label .el-icon { color: #f5222d; }
 
-.empty-hint {
-  padding: 24px;
-  text-align: center;
-  color: #86909c;
-  font-size: 14px;
+.mc-arrow {
+  margin-left: auto;
+  color: #c0c0c0;
 }
 </style>

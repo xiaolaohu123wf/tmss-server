@@ -17,10 +17,7 @@ const mobileDrawerOpen = ref(false)
 
 // ── 响应式：检测手机端 ──────────────────────────────────────
 const isMobile = ref(window.innerWidth <= 768)
-function onResize() {
-  isMobile.value = window.innerWidth <= 768
-  if (!isMobile.value) mobileDrawerOpen.value = false
-}
+function onResize() { isMobile.value = window.innerWidth <= 768 }
 onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => window.removeEventListener('resize', onResize))
 
@@ -32,22 +29,17 @@ const WEATHER_ICONS: Record<number, string> = {
 const weatherIcon = computed(() =>
   weather.value !== null ? (WEATHER_ICONS[weather.value.code] ?? '🌡️') : '',
 )
-async function fetchWeather() {
-  weather.value = await getWeather()
-}
+async function fetchWeather() { weather.value = await getWeather() }
 let weatherTimer: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  fetchWeather()
-  weatherTimer = setInterval(fetchWeather, 10 * 60 * 1000)
-})
+onMounted(() => { fetchWeather(); weatherTimer = setInterval(fetchWeather, 10 * 60 * 1000) })
 onUnmounted(() => { if (weatherTimer) clearInterval(weatherTimer) })
 
-// ── 路由监听 → 标签栏 ────────────────────────────────────────
+// ── 路由监听 → 标签栏 / 关闭抽屉 ───────────────────────────
 watch(
   () => route.name,
   () => {
     if (route.name && route.meta.layout !== 'auth') tabsStore.openTab(route)
-    mobileDrawerOpen.value = false // 导航后关闭抽屉
+    mobileDrawerOpen.value = false
   },
   { immediate: true },
 )
@@ -55,26 +47,22 @@ watch(
 // ── 菜单数据 ─────────────────────────────────────────────────
 const allMenuItems = computed(() => {
   const items = [
-    { name: 'dashboard',  path: '/dashboard',  icon: 'Monitor',       label: '大屏' },
-    { name: 'vehicles',   path: '/vehicles',   icon: 'Van',           label: '车辆' },
-    { name: 'devices',    path: '/devices',    icon: 'Cellphone',     label: '设备' },
-    { name: 'geoZones',   path: '/geo-zones',  icon: 'MapLocation',   label: '围栏' },
-    { name: 'events',     path: '/events',     icon: 'Bell',          label: '告警' },
-    { name: 'tracks',     path: '/tracks',     icon: 'Guide',         label: '轨迹' },
+    { name: 'dashboard',  path: '/dashboard',  icon: 'Monitor',        label: '主页面' },
+    { name: 'vehicles',   path: '/vehicles',   icon: 'Van',            label: '车辆' },
+    { name: 'devices',    path: '/devices',    icon: 'Cellphone',      label: '设备' },
+    { name: 'geoZones',   path: '/geo-zones',  icon: 'MapLocation',    label: '围栏' },
+    { name: 'events',     path: '/events',     icon: 'Bell',           label: '告警' },
+    { name: 'tracks',     path: '/tracks',     icon: 'Guide',          label: '轨迹' },
   ]
   if (auth.isManager) {
     items.push(
-      { name: 'users',    path: '/users',      icon: 'User',          label: '用户' },
+      { name: 'users',    path: '/users',      icon: 'User',           label: '用户' },
       { name: 'fleets',   path: '/fleets',     icon: 'OfficeBuilding', label: '车队' },
-      { name: 'settings', path: '/settings',   icon: 'Setting',       label: '设置' },
+      { name: 'settings', path: '/settings',   icon: 'Setting',        label: '设置' },
     )
   }
   return items
 })
-
-// 底部导航只显示最重要的 4 项 + "更多" 抽屉
-const bottomNavItems = computed(() => allMenuItems.value.slice(0, 4))
-const drawerItems = computed(() => allMenuItems.value.slice(4))
 
 const activeMenu = computed(() => route.path)
 
@@ -132,9 +120,9 @@ async function handleLogout() {
 
       <!-- ── 顶栏 ────────────────────────────────────── -->
       <el-header class="layout-header">
-        <!-- 手机：汉堡图标（仅当 drawerItems 有内容时显示） -->
+        <!-- 手机：汉堡图标 -->
         <el-icon
-          v-if="isMobile && drawerItems.length"
+          v-if="isMobile"
           class="mobile-menu-btn"
           size="22"
           @click="mobileDrawerOpen = true"
@@ -147,7 +135,6 @@ async function handleLogout() {
         </div>
 
         <div class="header-right">
-          <!-- 天气（手机上隐藏 name，只留图标+温度） -->
           <div v-if="weather" class="weather-widget">
             <span class="weather-icon">{{ weatherIcon }}</span>
             <span class="weather-temp">{{ weather.temp }}°C</span>
@@ -188,34 +175,9 @@ async function handleLogout() {
           </keep-alive>
         </RouterView>
       </el-main>
-
-      <!-- ══════════════════ 手机底部导航栏 ══════════════════ -->
-      <nav v-if="isMobile" class="mobile-bottom-nav">
-        <button
-          v-for="item in bottomNavItems"
-          :key="item.name"
-          class="mobile-nav-item"
-          :class="{ 'mobile-nav-item--active': route.path === item.path }"
-          @click="router.push(item.path)"
-        >
-          <el-icon size="22"><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
-        </button>
-
-        <!-- 更多按钮（当有 drawerItems 时显示） -->
-        <button
-          v-if="drawerItems.length"
-          class="mobile-nav-item"
-          :class="{ 'mobile-nav-item--active': mobileDrawerOpen }"
-          @click="mobileDrawerOpen = true"
-        >
-          <el-icon size="22"><More /></el-icon>
-          <span>更多</span>
-        </button>
-      </nav>
     </el-container>
 
-    <!-- ══════════════════ 手机侧滑抽屉（更多菜单）══════════════════ -->
+    <!-- ══════════════════ 手机侧滑导航抽屉 ══════════════════ -->
     <el-drawer
       v-if="isMobile"
       v-model="mobileDrawerOpen"
@@ -232,10 +194,8 @@ async function handleLogout() {
         </el-tag>
       </div>
 
-      <!-- 已在底栏的常用项 -->
-      <div class="drawer-section-label">常用</div>
       <div
-        v-for="item in bottomNavItems"
+        v-for="item in allMenuItems"
         :key="item.name"
         class="drawer-item"
         :class="{ 'drawer-item--active': route.path === item.path }"
@@ -245,24 +205,8 @@ async function handleLogout() {
         <span>{{ item.label }}</span>
       </div>
 
-      <!-- 更多项 -->
-      <template v-if="drawerItems.length">
-        <div class="drawer-section-label">管理</div>
-        <div
-          v-for="item in drawerItems"
-          :key="item.name"
-          class="drawer-item"
-          :class="{ 'drawer-item--active': route.path === item.path }"
-          @click="router.push(item.path)"
-        >
-          <el-icon size="20"><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
-        </div>
-      </template>
-
-      <!-- 车队长：我的车队 -->
       <template v-if="auth.role === 'fleet_captain'">
-        <div class="drawer-section-label">账号</div>
+        <div class="drawer-divider" />
         <div class="drawer-item" @click="router.push('/fleet-profile')">
           <el-icon size="20"><OfficeBuilding /></el-icon>
           <span>我的车队</span>
@@ -280,11 +224,7 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-/* ══ 公共 ═══════════════════════════════════════════════════ */
-.layout-container {
-  height: 100vh;
-  overflow: hidden;
-}
+.layout-container { height: 100vh; overflow: hidden; }
 
 /* ══ PC 侧边栏 ════════════════════════════════════════════ */
 .layout-aside {
@@ -304,12 +244,7 @@ async function handleLogout() {
   border-bottom: 1px solid #002140;
   flex-shrink: 0;
 }
-.logo-text {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  white-space: nowrap;
-}
+.logo-text { font-size: 18px; font-weight: 700; letter-spacing: 2px; white-space: nowrap; }
 .aside-menu {
   flex: 1;
   border-right: none;
@@ -345,11 +280,7 @@ async function handleLogout() {
   flex-shrink: 0;
   gap: 8px;
 }
-.mobile-menu-btn {
-  cursor: pointer;
-  color: #555;
-  flex-shrink: 0;
-}
+.mobile-menu-btn { cursor: pointer; color: #555; flex-shrink: 0; }
 .header-title {
   font-size: 16px;
   font-weight: 600;
@@ -360,12 +291,7 @@ async function handleLogout() {
   flex: 1;
 }
 .header-title--mobile { font-size: 14px; }
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
+.header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .username { font-size: 14px; color: #555; }
 .weather-widget {
   display: flex;
@@ -392,47 +318,8 @@ async function handleLogout() {
   scrollbar-gutter: stable;
 }
 .layout-main--mobile {
-  padding: 12px 8px;
-  /* 为底部导航栏留出空间（56px）+ iOS 安全区域 */
-  padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 12px);
-}
-
-/* ══ 手机底部导航栏 ═══════════════════════════════════════ */
-.mobile-bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: calc(56px + env(safe-area-inset-bottom, 0px));
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  background: #fff;
-  border-top: 1px solid #e8e8e8;
-  display: flex;
-  align-items: stretch;
-  z-index: 1000;
-  box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
-}
-.mobile-nav-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #888;
-  font-size: 11px;
-  padding: 6px 0;
-  transition: color 0.2s;
-  -webkit-tap-highlight-color: transparent;
-}
-.mobile-nav-item--active {
-  color: #1890ff;
-}
-.mobile-nav-item--active .el-icon {
-  filter: drop-shadow(0 0 4px rgba(24,144,255,0.4));
+  padding: 0;
+  overflow: hidden;
 }
 
 /* ══ 侧滑抽屉内容 ════════════════════════════════════════ */
@@ -442,20 +329,9 @@ async function handleLogout() {
   gap: 10px;
   padding: 20px 16px 16px;
   border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
 }
-.drawer-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1890ff;
-  letter-spacing: 2px;
-}
-.drawer-section-label {
-  font-size: 11px;
-  color: #aaa;
-  padding: 12px 16px 4px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
+.drawer-title { font-size: 18px; font-weight: 700; color: #1890ff; letter-spacing: 2px; }
 .drawer-item {
   display: flex;
   align-items: center;
@@ -469,9 +345,6 @@ async function handleLogout() {
   margin: 2px 8px;
 }
 .drawer-item:active { background: #f0f7ff; }
-.drawer-item--active {
-  background: #e6f4ff;
-  color: #1890ff;
-  font-weight: 600;
-}
+.drawer-item--active { background: #e6f4ff; color: #1890ff; font-weight: 600; }
+.drawer-divider { height: 1px; background: #f0f0f0; margin: 6px 16px; }
 </style>
