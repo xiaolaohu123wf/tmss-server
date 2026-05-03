@@ -19,7 +19,7 @@ const router = createRouter({
       path: '/dashboard',
       name: 'dashboard',
       component: () => import('@/views/DashboardView.vue'),
-      meta: { layout: 'main', title: '实时大屏' },
+      meta: { layout: 'main', title: '主页面' },
     },
     {
       path: '/vehicles',

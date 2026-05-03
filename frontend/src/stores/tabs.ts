@@ -13,7 +13,7 @@ export interface TabItem {
 const HOME_TAB: TabItem = {
   name: 'dashboard',
   path: '/dashboard',
-  title: '实时大屏',
+  title: '主页面',
   closable: false,
 }
 

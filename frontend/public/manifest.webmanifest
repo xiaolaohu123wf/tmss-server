@@ -23,14 +23,14 @@
   ],
   "shortcuts": [
     {
-      "name": "实时大屏",
+      "name": "主页面",
       "url": "/dashboard",
-      "description": "查看车辆实时位置"
+      "description": "车辆实时位置与告警概览"
     },
     {
-      "name": "事件告警",
+      "name": "事件查询",
       "url": "/events",
-      "description": "查看超速越界等告警记录"
+      "description": "查询超速、越界等事件记录"
     }
   ],
   "categories": ["transportation", "utilities"]

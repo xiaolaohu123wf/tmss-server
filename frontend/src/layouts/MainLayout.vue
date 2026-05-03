@@ -48,17 +48,17 @@ watch(
 const allMenuItems = computed(() => {
   const items = [
     { name: 'dashboard',  path: '/dashboard',  icon: 'Monitor',        label: '主页面' },
-    { name: 'vehicles',   path: '/vehicles',   icon: 'Van',            label: '车辆' },
-    { name: 'devices',    path: '/devices',    icon: 'Cellphone',      label: '设备' },
-    { name: 'geoZones',   path: '/geo-zones',  icon: 'MapLocation',    label: '围栏' },
-    { name: 'events',     path: '/events',     icon: 'Bell',           label: '告警' },
-    { name: 'tracks',     path: '/tracks',     icon: 'Guide',          label: '轨迹' },
+    { name: 'vehicles',   path: '/vehicles',   icon: 'Van',            label: '车辆管理' },
+    { name: 'devices',    path: '/devices',    icon: 'Cellphone',      label: '设备管理' },
+    { name: 'geoZones',   path: '/geo-zones',  icon: 'MapLocation',    label: '围栏管理' },
+    { name: 'events',     path: '/events',     icon: 'Bell',           label: '事件查询' },
+    { name: 'tracks',     path: '/tracks',     icon: 'Guide',          label: '轨迹查询' },
   ]
   if (auth.isManager) {
     items.push(
-      { name: 'users',    path: '/users',      icon: 'User',           label: '用户' },
-      { name: 'fleets',   path: '/fleets',     icon: 'OfficeBuilding', label: '车队' },
-      { name: 'settings', path: '/settings',   icon: 'Setting',        label: '设置' },
+      { name: 'users',    path: '/users',      icon: 'User',           label: '用户管理' },
+      { name: 'fleets',   path: '/fleets',     icon: 'OfficeBuilding', label: '车队管理' },
+      { name: 'settings', path: '/settings',   icon: 'Setting',        label: '系统设置' },
     )
   }
   return items

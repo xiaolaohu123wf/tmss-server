@@ -3,6 +3,7 @@ defineOptions({ name: 'SettingsView' })
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { get, post } from '@/api/index'
+import { APP_VERSION_TAG } from '@/releaseMeta'
 
 interface BusinessConfig {
   global_speed_limit: number
@@ -77,13 +78,22 @@ onMounted(loadConfig)
   <div class="settings-page">
     <div class="page-header">
       <h3>系统设置</h3>
-      <el-tag type="danger" size="small">高危操作 · 需二次密码验证</el-tag>
+      <el-tag type="info" effect="plain">前端 {{ APP_VERSION_TAG }}</el-tag>
+      <el-tag type="danger" size="small">高危参数 · 保存时需管理员密码二次验证</el-tag>
     </div>
+
+    <el-card class="about-card" header="版本与发布标记" shadow="never">
+      <div class="version-line">
+        <span class="version-label">软件版本</span>
+        <el-tag type="success" size="large">{{ APP_VERSION_TAG }}</el-tag>
+        <span class="version-hint">与 frontend/package.json 及仓库 Git 发布 tag 保持一致；新版本发布时请同时修改版本号。</span>
+      </div>
+    </el-card>
 
     <el-row :gutter="16">
       <!-- Speed & Alert settings -->
       <el-col :span="12">
-        <el-card header="告警参数" shadow="never" v-loading="loading">
+        <el-card header="限速、告警与在线检测" shadow="never" v-loading="loading">
           <el-form label-width="160px" :model="config">
             <el-form-item label="全局限速 (km/h)">
               <el-input-number
@@ -115,7 +125,7 @@ onMounted(loadConfig)
 
       <!-- Work state settings -->
       <el-col :span="12">
-        <el-card header="作业参数" shadow="never" v-loading="loading">
+        <el-card header="作业分段、驻留与气象" shadow="never" v-loading="loading">
           <el-form label-width="160px" :model="config">
             <el-form-item label="停车分段阈值 (分钟)">
               <el-input-number
@@ -150,9 +160,7 @@ onMounted(loadConfig)
     </el-row>
 
     <div class="save-bar">
-      <el-button type="primary" :loading="saving" @click="handleSave">
-        保存设置（需二次验证）
-      </el-button>
+      <el-button type="primary" :loading="saving" @click="handleSave">保存参数（二次验证）</el-button>
     </div>
   </div>
 </template>
@@ -167,10 +175,43 @@ onMounted(loadConfig)
 .page-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   background: #fff;
   border-radius: 8px;
   padding: 16px 20px;
+}
+
+.about-card {
+  border-radius: 8px;
+}
+
+.version-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 14px;
+  color: #606266;
+}
+
+.version-label {
+  font-weight: 600;
+  color: #303133;
+}
+
+.version-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+  flex-basis: 100%;
+}
+
+@media (min-width: 768px) {
+  .version-hint {
+    flex-basis: auto;
+    max-width: 420px;
+  }
 }
 
 .page-header h3 {

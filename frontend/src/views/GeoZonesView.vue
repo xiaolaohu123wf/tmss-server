@@ -274,7 +274,7 @@ async function handleToggle(zone: GeoZone) {
       <!-- LIST mode -->
       <template v-if="panelMode === 'list'">
         <div class="panel-header">
-          <span class="panel-title">围栏列表</span>
+          <span class="panel-title">电子围栏清单</span>
           <el-button type="primary" size="small" @click="openCreate">
             + 新增围栏
           </el-button>
