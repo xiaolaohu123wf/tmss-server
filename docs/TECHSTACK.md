@@ -111,7 +111,7 @@ async def vehicle_stream(
 
 ### 1.3 TCP 服务与 HTTP 共存模式
 
-TCP 服务（端口 9000）与 HTTP 服务（端口 8080）跑在同一 asyncio 事件循环：
+TCP 服务（端口 8901）与 HTTP 服务（端口 8900）跑在同一 asyncio 事件循环：
 
 ```python
 # app/main.py
@@ -121,8 +121,8 @@ from app.tcp.server import start_tcp_server
 from app.http.app import create_app
 
 async def main():
-    # 启动 TCP 服务（非阻塞）
-    tcp_server = await start_tcp_server(host="0.0.0.0", port=8901)
+    # 启动 TCP 服务（非阻塞，端口由 settings.tcp_port 控制，默认 8901）
+    tcp_server = await start_tcp_server()
 
     # 启动 HTTP 服务
     http_app = create_app()
@@ -270,7 +270,7 @@ async def try_fire_alert(redis: Redis, device_id: int, alert_type: str, cooldown
 # pyproject.toml
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -455,7 +455,7 @@ volumes:
 
 **Dockerfile（Python 多阶段构建）**：
 ```dockerfile
-FROM python:3.12-slim AS base
+FROM python:3.11-slim AS base
 WORKDIR /app
 RUN pip install uv
 
@@ -467,7 +467,7 @@ FROM base AS runtime
 COPY --from=deps /app/.venv /app/.venv
 COPY app/ ./app/
 ENV PATH="/app/.venv/bin:$PATH"
-EXPOSE 9000 8080
+EXPOSE 8901 8900
 CMD ["python", "-m", "app.main"]
 ```
 
@@ -482,7 +482,7 @@ CMD ["python", "-m", "app.main"]
 [project]
 name = "tmss-server"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     # HTTP
     "fastapi>=0.111",
@@ -589,6 +589,7 @@ tmss-server/
 │   │   ├── session_repo.py           # Session CRUD
 │   │   ├── weather_cache.py          # 天气缓存
 │   │   ├── heartbeat_cache.py        # 心跳状态
+│   │   ├── disconnect_cache.py       # 设备断线时间（供轨迹续接判断）
 │   │   └── debounce.py               # 告警防抖
 │   │
 │   ├── http/                         # HTTP Entry
@@ -603,7 +604,10 @@ tmss-server/
 │   │       ├── router_geo_zones.py   # 围栏配置
 │   │       ├── router_events.py      # 事件查询
 │   │       ├── router_users.py       # 用户管理
-│   │       ├── router_admin.py       # 系统配置（需二次验证）
+│   │       ├── router_admin.py       # 系统配置（需二次验证）+ 车队管理
+│   │       ├── router_fleets.py      # GET/PATCH /api/fleets/me
+│   │       ├── router_track_segments.py  # 轨迹段查询 + 管理员删除
+│   │       ├── router_tcp_messages.py    # TCP 调试消息环形缓冲
 │   │       └── router_stream.py      # SSE 实时推送
 │   │
 │   ├── tcp/                          # TCP Entry

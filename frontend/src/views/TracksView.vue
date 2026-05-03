@@ -52,7 +52,7 @@ const points = shallowRef<TrackPoint[]>([])
 const playIndex = ref(0)
 const playing = ref(false)
 const playbackRate = ref(1)
-let playTimer: ReturnType<typeof setInterval> | null = null
+let playTimer: ReturnType<typeof setTimeout> | null = null
 
 /** 进度条下方文案用独立 ref，避免模板每次访问 points[playIndex] 触发大范围 diff */
 const playbackMetaTime = ref('')
@@ -324,26 +324,44 @@ watch(playbackRate, () => {
 
 function stopPlayTimer() {
   if (playTimer) {
-    clearInterval(playTimer)
+    clearTimeout(playTimer)
     playTimer = null
   }
+}
+
+/**
+ * 按真实时间轴回放：根据相邻两点的 recorded_at 差值确定等待时长，
+ * 再除以 playbackRate 得到实际播放间隔。
+ * 单帧最小 16ms（~60fps）；单帧最大 3000ms 避免长间隙卡顿。
+ */
+function scheduleNextFrame() {
+  if (!playing.value || playIndex.value >= sliderMax.value) {
+    if (playIndex.value >= sliderMax.value) playing.value = false
+    return
+  }
+
+  const cur = points.value[playIndex.value]
+  const next = points.value[playIndex.value + 1]
+
+  let waitMs = 1000 / playbackRate.value   // 默认：假设 1s/点
+  if (cur && next) {
+    const realDiffMs = new Date(next.recorded_at).getTime() - new Date(cur.recorded_at).getTime()
+    // 限幅：防止异常大间隙（段边界、断线恢复）造成长时间卡顿
+    const clampedMs = Math.min(Math.max(realDiffMs, 0), 3000)
+    waitMs = Math.max(16, clampedMs / playbackRate.value)
+  }
+
+  playTimer = setTimeout(() => {
+    if (!playing.value) return
+    playIndex.value = Math.min(playIndex.value + 1, sliderMax.value)
+    scheduleNextFrame()
+  }, waitMs)
 }
 
 function startPlayTimer() {
   stopPlayTimer()
   if (points.value.length < 2) return
-  // 每帧固定 80ms；高倍速时通过跳帧（step > 1）保证播放速度
-  const FRAME_MS = 80
-  const base = 350
-  const step = Math.max(1, Math.round(playbackRate.value / (base / FRAME_MS)))
-  playTimer = setInterval(() => {
-    if (playIndex.value >= sliderMax.value) {
-      playing.value = false
-      stopPlayTimer()
-      return
-    }
-    playIndex.value = Math.min(playIndex.value + step, sliderMax.value)
-  }, FRAME_MS)
+  scheduleNextFrame()
 }
 
 watch(playing, (p) => {

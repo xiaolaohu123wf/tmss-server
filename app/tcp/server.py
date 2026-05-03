@@ -43,7 +43,7 @@ async def _heartbeat_monitor() -> None:
                         "imei": state.imei,
                         "elapsed_s": int(elapsed),
                     })
-                    await logger.awarning(
+                    await logger.ainfo(
                         "heartbeat_timeout",
                         device_id=state.device_id,
                         imei=state.imei,

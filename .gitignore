@@ -54,3 +54,7 @@ pnpm-debug.log*
 # Docker
 docker-compose.override.yml
 
+# Runtime
+.tmss.pid
+cookie.txt
+

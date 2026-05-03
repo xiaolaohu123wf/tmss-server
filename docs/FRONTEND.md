@@ -22,7 +22,7 @@
 cd frontend
 npm install
 
-# 开发模式（代理到后端 localhost:8080）
+# 开发模式（代理到后端 localhost:8900）
 bash dev.sh        # 或 npm run dev（需 Node 18+）
 
 # 生产构建
@@ -58,7 +58,8 @@ frontend/
 │   │   ├── events.ts          # 事件查询（分页）
 │   │   ├── tracks.ts          # 轨迹段查询 / 定位点获取 / 管理员删除
 │   │   ├── users.ts           # 用户管理（manager only）
-│   │   └── fleets.ts          # 车队管理（manager only）
+│   │   ├── fleets.ts          # 车队管理 + 车队长查看/编辑本队
+│   │   └── weather.ts         # 天气信息查询（大屏展示用）
 │   │
 │   ├── composables/
 │   │   ├── useAmap.ts         # 高德地图封装（初始化 / Marker / Polygon / Polyline / 绘制）
@@ -88,16 +89,17 @@ frontend/
 │   │                          # VehicleType = 'truck'|'loader'|'passenger_car'|'other'
 │   │
 │   ├── views/
-│   │   ├── LoginView.vue      # 登录页（浅蓝/水滴图标/系统名称）
-│   │   ├── DashboardView.vue  # 实时大屏（地图 + SSE + 告警）
-│   │   ├── VehiclesView.vue   # 车辆管理（含家用车型/驾驶员姓名）
-│   │   ├── DevicesView.vue    # 设备管理（管理员可删除）
-│   │   ├── GeoZonesView.vue   # 围栏管理（含地图绘制）
-│   │   ├── EventsView.vue     # 事件查询
-│   │   ├── TracksView.vue     # 历史轨迹查询与回放（AMap Polyline + 管理员删除）
-│   │   ├── UsersView.vue      # 用户管理
-│   │   ├── FleetsView.vue     # 车队管理
-│   │   └── SettingsView.vue   # 系统设置（二次验证）
+│   │   ├── LoginView.vue          # 登录页（浅蓝/水滴图标/系统名称）
+│   │   ├── DashboardView.vue      # 实时大屏（地图 + SSE + 告警）
+│   │   ├── VehiclesView.vue       # 车辆管理（含家用车型/驾驶员姓名）
+│   │   ├── DevicesView.vue        # 设备管理（管理员可删除）
+│   │   ├── GeoZonesView.vue       # 围栏管理（含地图绘制）
+│   │   ├── EventsView.vue         # 事件查询
+│   │   ├── TracksView.vue         # 历史轨迹查询与回放（AMap Polyline + 管理员删除）
+│   │   ├── UsersView.vue          # 用户管理
+│   │   ├── FleetsView.vue         # 车队管理（manager only）
+│   │   ├── FleetProfileView.vue   # 车队长查看/编辑本队信息（fleet_captain）
+│   │   └── SettingsView.vue       # 系统设置（二次验证）
 │   │
 │   ├── App.vue                # 根组件（scrollbar-gutter 全局样式）
 │   └── main.ts                # 入口（注册 Element Plus、Pinia、Router）
@@ -123,6 +125,7 @@ frontend/
 | `/tracks` | `TracksView` | 全部已登录 | 历史轨迹查询 + 地图回放 + 速度滑块（manager 可删除段）|
 | `/users` | `UsersView` | **manager only** | 用户 CRUD + 角色/车队分配 |
 | `/fleets` | `FleetsView` | **manager only** | 车队 CRUD |
+| `/fleet-profile` | `FleetProfileView` | **fleet_captain** | 查看本队名称、编辑备注 |
 | `/settings` | `SettingsView` | **manager only** | 业务参数配置（**需二次密码验证**）|
 
 ### 权限守卫逻辑
@@ -266,6 +269,7 @@ await post('/admin/config', config.value, {
 
 1. **ECharts 统计面板**：大屏右侧增加作业状态分布饼图、今日告警趋势折线图
 2. **围栏管理地图坐标同步**：编辑已有围栏时，在地图上高亮显示当前围栏并支持拖拽修改顶点
-3. **nginx 配置**：生产环境 `nginx.conf` 反向代理 `/api` → 后端 `:8900`，前端静态资源直接服务
+3. **nginx 配置**：✅ 已完成，`nginx.conf` 位于项目根目录，生产部署时执行 `cp nginx.conf /etc/nginx/conf.d/tmss.conf && nginx -s reload`
 4. **SSE 前端对接完善**：测试多设备并发下 SSE 断线重连后车辆位置的一致性
 5. **历史轨迹 ECharts 速度图**：`TracksView` 底部增加速度折线图，与时间轴联动
+6. **车队长权限 V2**：见 `FEATURE_FLEET_CAPTAIN_V2.md`，包含大屏拖影、设备绑定车队隔离等（待确认后开发）

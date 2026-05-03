@@ -522,11 +522,15 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
     # 服务端口
     tcp_port: int = 8901
     http_port: int = 8900
+
+    # TCP 调试（高流量慎用）
+    tcp_raw_print: bool = False          # TCP_RAW_PRINT=true 时每条收发 print 到 stdout
+    tcp_messages_public: bool = False    # TCP_MESSAGES_PUBLIC=true 时 /api/admin/tcp-messages 免登录
 
     # 数据库
     database_url: str = Field(min_length=1)
@@ -545,8 +549,11 @@ class Settings(BaseSettings):
     weather_api_url: str = "https://wttr.in"
 
     # 安全
-    session_secret: SecretStr
+    session_secret: SecretStr = Field(min_length=16)
     bcrypt_cost: int = 12
+
+    # 日志级别：DEBUG / INFO / WARNING / ERROR
+    log_level: str = "INFO"
 
 settings = Settings()  # type: ignore[call-arg]
 ```
@@ -777,15 +784,15 @@ tmss-server/
 │   │   ├── http_vehicle.py           # VehicleCreate / VehicleResponse
 │   │   ├── http_geo_zone.py
 │   │   ├── http_event.py
-│   │   ├── http_user.py
-│   │   └── domain.py                 # SessionData 等内部 DTO
+│   │   └── http_user.py              # LoginRequest / SessionData 等内部 DTO
 │   │
 │   ├── services/                     # Service 层（业务逻辑）
 │   │   ├── alert_service.py          # 超速/越界判定 + 防抖
 │   │   ├── geofence_service.py       # 点在多边形 + 坐标转换
 │   │   ├── work_state_service.py     # 作业状态机
 │   │   ├── command_service.py        # 指令下发
-│   │   ├── track_segment_service.py  # 轨迹分段
+│   │   ├── track_segment_service.py  # 轨迹分段（停车/掉线 ≥阈值 切段）
+│   │   ├── segment_sweeper.py        # 后台轨迹段扫描（关闭开放段）
 │   │   ├── vehicle_service.py
 │   │   ├── geo_zone_service.py
 │   │   ├── auth_service.py
@@ -798,22 +805,35 @@ tmss-server/
 │   │   │   ├── location_repo.py
 │   │   │   ├── vehicle_repo.py
 │   │   │   ├── device_repo.py
+│   │   │   ├── fleet_repo.py         # 车队 CRUD
 │   │   │   ├── geo_zone_repo.py
 │   │   │   ├── event_repo.py
 │   │   │   ├── work_session_repo.py
 │   │   │   ├── command_log_repo.py
+│   │   │   ├── operation_ban_repo.py # 禁运时段规则
+│   │   │   ├── business_config_repo.py  # 业务参数（全局单行）
+│   │   │   ├── track_segment_repo.py # 轨迹段写入 / 更新
 │   │   │   ├── track_query_repo.py   # 轨迹段查询 / 定位点拉取 / 删除
 │   │   │   └── user_repo.py
 │   │   └── queries/                  # SQL 字符串常量
 │   │       ├── location.py
 │   │       ├── vehicle.py
-│   │       ├── ...
+│   │       ├── device.py
+│   │       ├── geo_zone.py
+│   │       ├── event.py
+│   │       ├── work_session.py
+│   │       ├── command_log.py
+│   │       ├── operation_ban.py
+│   │       ├── business_config.py
+│   │       ├── track_segment.py
+│   │       └── user.py
 │   │
 │   ├── cache/                        # Redis 封装
 │   │   ├── pool.py                   # Redis 连接池
 │   │   ├── session_repo.py           # Session CRUD
 │   │   ├── weather_cache.py          # 天气缓存
 │   │   ├── heartbeat_cache.py        # 心跳状态
+│   │   ├── disconnect_cache.py       # 设备断线时间记录（供轨迹续接判断）
 │   │   └── debounce.py               # 告警防抖
 │   │
 │   ├── http/                         # HTTP Entry
@@ -828,7 +848,8 @@ tmss-server/
 │   │       ├── router_geo_zones.py
 │   │       ├── router_events.py
 │   │       ├── router_users.py
-│   │       ├── router_admin.py
+│   │       ├── router_admin.py       # 系统配置（需二次验证）+ 车队管理
+│   │       ├── router_fleets.py      # GET/PATCH /api/fleets/me（车队长自查/编辑）
 │   │       ├── router_track_segments.py  # 轨迹段 CRUD + GCJ-02 坐标转换
 │   │       ├── router_tcp_messages.py    # 调试：TCP 原始消息环形缓冲
 │   │       └── router_stream.py          # SSE
@@ -837,6 +858,7 @@ tmss-server/
 │   │   ├── server.py                 # asyncio.start_server
 │   │   ├── connection.py             # 单个连接生命周期
 │   │   ├── protocol.py               # 报文分帧 + 解析
+│   │   ├── raw_trace.py              # TCP 原始收发调试缓冲（tcp_raw_print 开关）
 │   │   └── handlers/
 │   │       ├── register_handler.py
 │   │       ├── gps_handler.py
@@ -844,13 +866,13 @@ tmss-server/
 │   │       ├── heartbeat_handler.py
 │   │       └── time_weather_handler.py
 │   │
-│   └── tasks/                        # 周期性后台任务
-│       ├── heartbeat_scanner.py      # 90 秒离线检测
-│       └── partition_creator.py      # 月度分区自动创建
+│   └── tasks/                        # 周期性后台任务（集成在各模块 startup 中）
 │
 ├── alembic/
 │   ├── versions/
-│   │   └── V001__init_schema.py
+│   │   ├── V001__init_schema.py
+│   │   ├── V002__add_vehicle_driver_name.py
+│   │   └── V003__command_log_speed.py
 │   ├── env.py
 │   └── alembic.ini
 │
@@ -861,6 +883,8 @@ tmss-server/
 │   ├── http/
 │   └── tcp/
 │
+├── frontend/                         # Vue 3 + Vite 前端（见 docs/FRONTEND.md）
+├── nginx.conf                        # 生产环境 nginx 反向代理配置
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml

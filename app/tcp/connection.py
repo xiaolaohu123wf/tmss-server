@@ -105,7 +105,7 @@ class ConnectionHandler:
                 try:
                     chunk = await asyncio.wait_for(self._reader.read(4096), timeout=120)
                 except asyncio.TimeoutError:
-                    await logger.awarning("tcp_read_timeout", peer=self._peer)
+                    await logger.ainfo("tcp_read_timeout", peer=self._peer)
                     break
                 if not chunk:
                     break  # 对端关闭
