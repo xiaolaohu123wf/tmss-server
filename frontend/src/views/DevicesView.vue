@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineOptions({ name: 'DevicesView' })
 import { ref, onMounted, computed } from 'vue'
+const isMobile = ref(window.innerWidth <= 768)
+onMounted(() => window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768 }))
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -185,14 +187,14 @@ async function onTabChange(pane: { paneName: string }) {
     <!-- ════ 管理员：完整设备表 ════ -->
     <template v-if="authStore.isManager">
       <el-table :data="allDevices" v-loading="loading" border stripe>
-        <el-table-column label="ID" prop="id" width="60" />
-        <el-table-column label="IMEI" prop="imei" min-width="155">
+        <el-table-column v-if="!isMobile" label="ID" prop="id" width="60" />
+        <el-table-column label="IMEI" prop="imei" min-width="130">
           <template #default="{ row }"><span class="mono">{{ row.imei }}</span></template>
         </el-table-column>
-        <el-table-column label="定位状态" width="120">
+        <el-table-column label="状态" :width="isMobile ? 90 : 120">
           <template #default="{ row }"><DeviceStatusTag :device="row" /></template>
         </el-table-column>
-        <el-table-column label="最后定位" width="95">
+        <el-table-column v-if="!isMobile" label="最后定位" width="95">
           <template #default="{ row }">
             <template v-if="row.last_location_at">
               <div class="time-text">{{ formatChinaDateTimeSplit(row.last_location_at).date }}</div>
@@ -201,7 +203,7 @@ async function onTabChange(pane: { paneName: string }) {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="心跳时间" width="95">
+        <el-table-column v-if="!isMobile" label="心跳时间" width="95">
           <template #default="{ row }">
             <template v-if="row.last_heartbeat_at">
               <div class="time-text">{{ formatChinaDateTimeSplit(row.last_heartbeat_at).date }}</div>
@@ -210,19 +212,19 @@ async function onTabChange(pane: { paneName: string }) {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="固件" prop="firmware_version" width="90">
+        <el-table-column v-if="!isMobile" label="固件" prop="firmware_version" width="90">
           <template #default="{ row }"><span class="muted">{{ row.firmware_version ?? '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="ICCID" prop="iccid" min-width="150">
+        <el-table-column v-if="!isMobile" label="ICCID" prop="iccid" min-width="150">
           <template #default="{ row }"><span class="mono small">{{ row.iccid ?? '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="绑定车辆" width="110">
+        <el-table-column label="绑定车辆" :width="isMobile ? 80 : 110">
           <template #default="{ row }">
             <span v-if="row.vehicle_license" class="plate">{{ row.vehicle_license }}</span>
-            <el-tag v-else type="info" size="small">未绑定</el-tag>
+            <el-tag v-else type="info" size="small">—</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="232" fixed="right">
+        <el-table-column label="操作" :width="isMobile ? 150 : 232" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="primary" :disabled="!row.online" @click="openCommand(row)">下发指令</el-button>
@@ -240,19 +242,19 @@ async function onTabChange(pane: { paneName: string }) {
         <!-- Tab 1：我的设备（本队已绑定的） -->
         <el-tab-pane label="我的设备" name="my">
           <el-table :data="myDevices" v-loading="loading" border stripe>
-            <el-table-column label="IMEI" prop="imei" min-width="155">
+            <el-table-column label="IMEI" prop="imei" min-width="130">
               <template #default="{ row }"><span class="mono">{{ row.imei }}</span></template>
             </el-table-column>
-            <el-table-column label="状态" width="110">
+            <el-table-column label="状态" :width="isMobile ? 90 : 110">
               <template #default="{ row }"><DeviceStatusTag :device="row" /></template>
             </el-table-column>
-            <el-table-column label="绑定车辆" width="120">
+            <el-table-column label="绑定车辆" :width="isMobile ? 80 : 120">
               <template #default="{ row }">
                 <span v-if="row.vehicle_license" class="plate">{{ row.vehicle_license }}</span>
-                <el-tag v-else type="info" size="small">未绑定</el-tag>
+                <el-tag v-else type="info" size="small">—</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="最后定位" width="95">
+            <el-table-column v-if="!isMobile" label="最后定位" width="95">
               <template #default="{ row }">
                 <template v-if="row.last_location_at">
                   <div class="time-text">{{ formatChinaDateTimeSplit(row.last_location_at).date }}</div>
@@ -261,7 +263,7 @@ async function onTabChange(pane: { paneName: string }) {
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="心跳" width="95">
+            <el-table-column v-if="!isMobile" label="心跳" width="95">
               <template #default="{ row }">
                 <template v-if="row.last_heartbeat_at">
                   <div class="time-text">{{ formatChinaDateTimeSplit(row.last_heartbeat_at).date }}</div>
@@ -270,7 +272,7 @@ async function onTabChange(pane: { paneName: string }) {
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" :width="isMobile ? 120 : 140" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" :disabled="!row.online" @click="openCommand(row)">下发指令</el-button>
                 <el-button v-if="row.vehicle_id" link type="warning" @click="handleUnbind(row)">解绑</el-button>
@@ -285,13 +287,13 @@ async function onTabChange(pane: { paneName: string }) {
         <!-- Tab 2：可绑定设备（全局未绑定） -->
         <el-tab-pane label="可绑定设备" name="unbound">
           <el-table :data="unboundDevices" v-loading="unboundLoading" border stripe>
-            <el-table-column label="IMEI" prop="imei" min-width="155">
+            <el-table-column label="IMEI" prop="imei" min-width="130">
               <template #default="{ row }"><span class="mono">{{ row.imei }}</span></template>
             </el-table-column>
-            <el-table-column label="状态" width="110">
+            <el-table-column label="状态" :width="isMobile ? 90 : 110">
               <template #default="{ row }"><DeviceStatusTag :device="row" /></template>
             </el-table-column>
-            <el-table-column label="最后定位" width="95">
+            <el-table-column v-if="!isMobile" label="最后定位" width="95">
               <template #default="{ row }">
                 <template v-if="row.last_location_at">
                   <div class="time-text">{{ formatChinaDateTimeSplit(row.last_location_at).date }}</div>
@@ -300,7 +302,7 @@ async function onTabChange(pane: { paneName: string }) {
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="ICCID" prop="iccid" min-width="150">
+            <el-table-column v-if="!isMobile" label="ICCID" prop="iccid" min-width="150">
               <template #default="{ row }"><span class="mono small">{{ row.iccid ?? '—' }}</span></template>
             </el-table-column>
             <el-table-column label="操作" width="110" fixed="right">
@@ -317,7 +319,7 @@ async function onTabChange(pane: { paneName: string }) {
     </template>
 
     <!-- ── 添加设备弹窗（管理员） ── -->
-    <el-dialog v-model="createVisible" title="添加设备" width="420px">
+    <el-dialog v-model="createVisible" title="添加设备" :width="isMobile ? '95vw' : '420px'">
       <el-form ref="createFormRef" :model="createForm" label-width="100px">
         <el-form-item label="IMEI" prop="imei"
           :rules="[{ required: true, message: '请输入 IMEI' }, { len: 15, message: 'IMEI 为 15 位' }]">
@@ -334,7 +336,7 @@ async function onTabChange(pane: { paneName: string }) {
     </el-dialog>
 
     <!-- ── 编辑设备弹窗 ── -->
-    <el-dialog v-model="editVisible" title="编辑设备" width="440px">
+    <el-dialog v-model="editVisible" title="编辑设备" :width="isMobile ? '95vw' : '440px'">
       <el-form label-width="100px">
         <el-form-item label="固件版本">
           <span style="font-size:13px;color:#606266">{{ editCurrentFirmware }}</span>
@@ -351,7 +353,7 @@ async function onTabChange(pane: { paneName: string }) {
     </el-dialog>
 
     <!-- ── 下发指令弹窗 ── -->
-    <el-dialog v-model="commandVisible" title="手动下发指令" width="420px">
+    <el-dialog v-model="commandVisible" title="手动下发指令" :width="isMobile ? '95vw' : '420px'">
       <el-descriptions :column="1" border size="small">
         <el-descriptions-item label="目标设备 IMEI">
           <span class="mono">{{ commandDeviceImei }}</span>
@@ -371,7 +373,7 @@ async function onTabChange(pane: { paneName: string }) {
     </el-dialog>
 
     <!-- ── 车队长：绑定设备到车辆弹窗 ── -->
-    <el-dialog v-model="bindVisible" title="绑定设备到车辆" width="440px">
+    <el-dialog v-model="bindVisible" title="绑定设备到车辆" :width="isMobile ? '95vw' : '440px'">
       <el-descriptions :column="1" border size="small" style="margin-bottom:16px">
         <el-descriptions-item label="设备 IMEI">
           <span class="mono">{{ bindTargetDevice?.imei }}</span>
@@ -402,6 +404,7 @@ async function onTabChange(pane: { paneName: string }) {
 
 <style scoped>
 .page-container { background: #fff; border-radius: 8px; padding: 20px; }
+@media (max-width: 768px) { .page-container { padding: 12px 8px; border-radius: 0; } }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
 .mono { font-family: monospace; font-size: 12px; }

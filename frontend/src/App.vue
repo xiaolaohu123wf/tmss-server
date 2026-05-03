@@ -35,4 +35,21 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 
 /* Element Plus 表格、表单等内容区允许选中 */
 .el-table, .el-form { -webkit-user-select: text; user-select: text; }
+
+/* ── 手机全局覆盖 ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* 管理页面通用容器：去掉圆角，充满宽度 */
+  .layout-main--mobile .page-container {
+    border-radius: 0 !important;
+    padding: 12px 8px !important;
+  }
+  /* page-header 标题缩小 */
+  .layout-main--mobile .page-header h3 { font-size: 15px; }
+  /* 表格字体缩小一点 */
+  .layout-main--mobile .el-table { font-size: 12px; }
+  /* dialog 最小宽度保护 */
+  .el-dialog { max-width: 96vw !important; }
+  /* 分页器折行时对齐 */
+  .el-pagination { gap: 4px; }
+}
 </style>

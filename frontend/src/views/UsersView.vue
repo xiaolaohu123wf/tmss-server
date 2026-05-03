@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineOptions({ name: 'UsersView' })
 import { ref, onMounted } from 'vue'
+const isMobile = ref(window.innerWidth <= 768)
+onMounted(() => window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768 }))
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { usersApi } from '@/api/users'
@@ -63,38 +65,36 @@ const roleLabel = (role: string) => {
     </div>
 
     <el-table :data="users" v-loading="loading" border stripe>
-      <el-table-column label="ID" prop="id" width="70" />
-      <el-table-column label="用户名" prop="username" min-width="120" />
-      <el-table-column label="角色" width="100">
+      <el-table-column v-if="!isMobile" label="ID" prop="id" width="70" />
+      <el-table-column label="用户名" prop="username" min-width="100" />
+      <el-table-column label="角色" width="90">
         <template #default="{ row }">
           <el-tag :type="row.role === 'manager' ? 'danger' : 'info'" size="small">
             {{ roleLabel(row.role) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="所属车队" prop="fleet_name" min-width="120">
-        <template #default="{ row }">
-          {{ row.fleet_name ?? '全部' }}
-        </template>
+      <el-table-column v-if="!isMobile" label="所属车队" prop="fleet_name" min-width="100">
+        <template #default="{ row }">{{ row.fleet_name ?? '全部' }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="80">
+      <el-table-column v-if="!isMobile" label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
             {{ row.is_active ? '正常' : '禁用' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" width="175">
+      <el-table-column v-if="!isMobile" label="创建时间" width="175">
         <template #default="{ row }">{{ formatChinaDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="操作" width="70" fixed="right">
         <template #default="{ row }">
           <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新增用户" width="460px" draggable>
+    <el-dialog v-model="dialogVisible" title="新增用户" :width="isMobile ? '95vw' : '460px'" draggable>
       <el-form ref="formRef" :model="form" label-width="90px">
         <el-form-item label="用户名" prop="username" :rules="[{ required: true }]">
           <el-input v-model="form.username" />
@@ -125,4 +125,5 @@ const roleLabel = (role: string) => {
 .page-container { background: #fff; border-radius: 8px; padding: 20px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+@media (max-width: 768px) { .page-container { padding: 12px 8px; border-radius: 0; } }
 </style>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineOptions({ name: 'VehiclesView' })
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
+const isMobile = ref(window.innerWidth <= 768)
+onMounted(() => window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768 }))
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
@@ -198,45 +200,45 @@ watch(vehicles, () => { void scrollToHighlight() })
       stripe
       :row-class-name="rowClassName"
     >
-      <el-table-column label="ID" prop="id" width="60" />
-      <el-table-column label="车牌号" prop="license_plate" width="120" />
-      <el-table-column label="车型" width="90">
+      <el-table-column label="ID" prop="id" width="52" />
+      <el-table-column label="车牌号" prop="license_plate" min-width="100" />
+      <el-table-column v-if="!isMobile" label="车型" width="80">
         <template #default="{ row }">
           {{ vehicleTypeOptions.find((o) => o.value === row.vehicle_type)?.label ?? row.vehicle_type }}
         </template>
       </el-table-column>
-      <el-table-column label="载重(t)" prop="load_capacity" width="80" align="center">
+      <el-table-column v-if="!isMobile" label="载重(t)" prop="load_capacity" width="80" align="center">
         <template #default="{ row }">{{ row.load_capacity ?? '—' }}</template>
       </el-table-column>
-      <el-table-column label="驾驶员" width="100">
+      <el-table-column v-if="!isMobile" label="驾驶员" width="90">
         <template #default="{ row }">
           <span v-if="row.driver_name">{{ row.driver_name }}</span>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="所属车队" min-width="100">
+      <el-table-column label="所属车队" min-width="80">
         <template #default="{ row }">
           <span v-if="row.fleet_name">{{ row.fleet_name }}</span>
-          <el-tag v-else type="info" size="small">未分配</el-tag>
+          <el-tag v-else type="info" size="small">—</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="绑定设备" min-width="155">
+      <el-table-column v-if="!isMobile" label="绑定设备" min-width="140">
         <template #default="{ row }">
           <span v-if="row.device_imei" class="imei-text">{{ row.device_imei }}</span>
           <el-tag v-else type="info" size="small">未绑定</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="185" fixed="right">
+      <el-table-column label="操作" :width="isMobile ? 130 : 185" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="primary" @click="openBind(row)">绑定设备</el-button>
+          <el-button v-if="!isMobile" link type="primary" @click="openBind(row)">绑定设备</el-button>
           <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <!-- Create / Edit dialog -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px" draggable>
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" :width="isMobile ? '95vw' : '520px'" draggable>
       <el-form ref="formRef" :model="form" label-width="90px">
         <el-form-item
           label="车牌号"
@@ -272,7 +274,7 @@ watch(vehicles, () => { void scrollToHighlight() })
     </el-dialog>
 
     <!-- Bind device dialog -->
-    <el-dialog v-model="bindDialogVisible" title="绑定设备" width="420px">
+    <el-dialog v-model="bindDialogVisible" title="绑定设备" :width="isMobile ? '95vw' : '420px'">
       <el-form label-width="80px">
         <el-form-item label="选择设备">
           <el-select
@@ -303,6 +305,10 @@ watch(vehicles, () => { void scrollToHighlight() })
   background: #fff;
   border-radius: 8px;
   padding: 20px;
+}
+
+@media (max-width: 768px) {
+  .page-container { padding: 12px 8px; border-radius: 0; }
 }
 
 .page-header {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineOptions({ name: 'FleetsView' })
 import { ref, onMounted } from 'vue'
+const isMobile = ref(window.innerWidth <= 768)
+onMounted(() => window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768 }))
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { fleetsApi } from '@/api/fleets'
@@ -90,13 +92,13 @@ function copyCredentials() {
     </div>
 
     <el-table :data="fleets" v-loading="loading" border stripe>
-      <el-table-column label="ID" prop="id" width="70" />
-      <el-table-column label="车队名称" prop="name" min-width="160" />
-      <el-table-column label="备注" prop="notes" min-width="200" />
-      <el-table-column label="创建时间" width="175">
+      <el-table-column v-if="!isMobile" label="ID" prop="id" width="70" />
+      <el-table-column label="车队名称" prop="name" min-width="120" />
+      <el-table-column v-if="!isMobile" label="备注" prop="notes" min-width="160" />
+      <el-table-column v-if="!isMobile" label="创建时间" width="175">
         <template #default="{ row }">{{ formatChinaDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
@@ -105,7 +107,7 @@ function copyCredentials() {
     </el-table>
 
     <!-- 新建/编辑车队对话框 -->
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑车队' : '新增车队'" width="440px" draggable>
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑车队' : '新增车队'" :width="isMobile ? '95vw' : '440px'" draggable>
       <el-form ref="formRef" :model="form" label-width="90px">
         <el-form-item label="车队名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.name" :disabled="!!editingId" />
@@ -127,7 +129,7 @@ function copyCredentials() {
     <el-dialog
       v-model="credDialogVisible"
       title="车队长账号已创建"
-      width="400px"
+      :width="isMobile ? '95vw' : '400px'"
       :close-on-click-modal="false"
     >
       <p class="cred-tip">车队「<strong>{{ newFleetName }}</strong>」创建成功，初始账号如下，<em>请立即妥善保存</em>：</p>
@@ -153,6 +155,7 @@ function copyCredentials() {
 .page-container { background: #fff; border-radius: 8px; padding: 20px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+@media (max-width: 768px) { .page-container { padding: 12px 8px; border-radius: 0; } }
 
 .cred-tip { margin: 0 0 16px; font-size: 14px; color: #303133; line-height: 1.6; }
 .cred-box {

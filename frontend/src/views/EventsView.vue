@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineOptions({ name: 'EventsView' })
 import { ref, reactive, onMounted } from 'vue'
+const isMobile = ref(window.innerWidth <= 768)
+onMounted(() => window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768 }))
 import { useRouter } from 'vue-router'
 import { eventsApi } from '@/api/events'
 import EventTypeTag from '@/components/EventTypeTag.vue'
@@ -123,7 +125,7 @@ onMounted(loadData)
             start-placeholder="开始时间"
             end-placeholder="结束时间"
             value-format="YYYY-MM-DDTHH:mm:ss"
-            style="width: 360px"
+            :style="isMobile ? 'width:100%' : 'width:360px'"
           />
         </el-form-item>
 
@@ -136,13 +138,13 @@ onMounted(loadData)
 
     <!-- Results -->
     <el-table :data="events" v-loading="loading" border stripe style="margin-top: 12px">
-      <el-table-column label="ID" prop="id" width="70" />
-      <el-table-column label="事件类型" width="120">
+      <el-table-column v-if="!isMobile" label="ID" prop="id" width="60" />
+      <el-table-column label="事件类型" :width="isMobile ? 90 : 120">
         <template #default="{ row }">
           <EventTypeTag :type="row.event_type" />
         </template>
       </el-table-column>
-      <el-table-column label="车辆" width="130">
+      <el-table-column label="车辆" :min-width="isMobile ? 90 : 130">
         <template #default="{ row }">
           <el-button
             v-if="row.vehicle_id"
@@ -156,38 +158,31 @@ onMounted(loadData)
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="速度(km/h)" prop="speed" width="100" align="center">
+      <el-table-column v-if="!isMobile" label="速度(km/h)" prop="speed" width="100" align="center">
         <template #default="{ row }">{{ row.speed != null ? row.speed.toFixed(1) : '—' }}</template>
       </el-table-column>
-      <el-table-column label="坐标" min-width="175">
+      <el-table-column v-if="!isMobile" label="坐标" min-width="160">
         <template #default="{ row }">
           <span v-if="row.lat != null" class="mono">{{ row.lat.toFixed(5) }}, {{ row.lng.toFixed(5) }}</span>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="发生时间" width="185">
+      <el-table-column label="发生时间" :width="isMobile ? 90 : 185">
         <template #default="{ row }">
           <template v-if="row.occurred_at">
             <div>{{ formatChinaDateTimeSplit(row.occurred_at).date }}</div>
             <div class="time-secondary">
-              {{ formatChinaDateTimeSplit(row.occurred_at).time }} · {{ chinaTimeZoneLabel() }}
+              {{ formatChinaDateTimeSplit(row.occurred_at).time }}
+              <template v-if="!isMobile"> · {{ chinaTimeZoneLabel() }}</template>
             </div>
           </template>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="附加信息" min-width="200">
+      <el-table-column v-if="!isMobile" label="附加信息" min-width="180">
         <template #default="{ row }">
           <div class="extra-wrap">
-            <el-tag
-              v-if="isManualEvent(row)"
-              type="warning"
-              size="small"
-              effect="plain"
-              class="tag-manual"
-            >
-              手动下发
-            </el-tag>
+            <el-tag v-if="isManualEvent(row)" type="warning" size="small" effect="plain" class="tag-manual">手动下发</el-tag>
             <span v-if="row.cmd_sent" class="cmd-tag">{{ row.cmd_sent }}</span>
             <span v-if="row.detail" class="mono small detail-json">{{ JSON.stringify(row.detail) }}</span>
             <span v-if="!row.detail && !row.cmd_sent && !isManualEvent(row)" class="muted">—</span>
@@ -200,9 +195,10 @@ onMounted(loadData)
       v-model:current-page="query.page"
       v-model:page-size="query.size"
       :total="total"
-      layout="total, prev, pager, next, sizes"
+      :layout="isMobile ? 'total, prev, pager, next' : 'total, prev, pager, next, sizes'"
       :page-sizes="[10, 20, 50, 100]"
-      style="margin-top: 16px; justify-content: flex-end"
+      :pager-count="isMobile ? 5 : 7"
+      style="margin-top: 16px; justify-content: flex-end; flex-wrap: wrap"
       @current-change="handlePageChange"
       @size-change="(s: number) => { query.size = s; query.page = 1; loadData() }"
     />
@@ -219,6 +215,13 @@ onMounted(loadData)
   border-radius: 8px;
   padding: 16px 20px;
   margin-bottom: 12px;
+}
+
+@media (max-width: 768px) {
+  .page-container { padding: 0; background: #fff; }
+  .page-header { border-radius: 0; padding: 10px 12px; margin-bottom: 0; }
+  .filter-card { border-radius: 0; }
+  :deep(.el-form--inline .el-form-item) { margin-bottom: 8px; }
 }
 
 .page-header h3 {
