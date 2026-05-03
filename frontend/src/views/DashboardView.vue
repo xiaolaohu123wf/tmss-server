@@ -304,21 +304,21 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- 图例（手机上折叠，仅显示色块） -->
-        <div class="map-legend" :class="{ 'map-legend--compact': isMobile }">
-          <div v-if="!isMobile" class="legend-title">图例</div>
+        <!-- 图例：桌面纵向列表；手机为两列网格，图标 + 状态标签并列便于辨认 -->
+        <div class="map-legend" :class="{ 'map-legend--mobile': isMobile }">
+          <div class="legend-title">图例</div>
           <div
             v-for="(color, state) in STATE_COLORS"
             :key="state"
             class="legend-item"
           >
-            <svg width="16" height="12" viewBox="0 0 32 24" fill="none">
+            <svg width="16" height="12" viewBox="0 0 32 24" fill="none" aria-hidden="true">
               <rect x="1" y="7" width="18" height="13" rx="2" :fill="color"/>
               <rect x="19" y="11" width="10" height="9" rx="1.5" :fill="color"/>
               <circle cx="7" cy="21" r="3" fill="#222"/>
               <circle cx="24" cy="21" r="3" fill="#222"/>
             </svg>
-            <VehicleStatusTag v-if="!isMobile" :state="(state as WorkState)" />
+            <VehicleStatusTag :state="(state as WorkState)" />
           </div>
         </div>
       </div>
@@ -580,15 +580,48 @@ onUnmounted(() => {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-.map-legend--compact {
-  flex-direction: row;
-  padding: 6px 8px;
-  gap: 4px;
-  bottom: 12px;
+.legend-title {
+  font-size: 11px;
+  color: #909399;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
-.legend-title { font-size: 11px; color: #909399; font-weight: 600; margin-bottom: 2px; }
 .legend-item { display: flex; align-items: center; gap: 8px; }
+
+/* 手机图例：两列排版，五项完整展示图标 + el-tag 文案 */
+.map-legend--mobile {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  max-width: min(360px, calc(100vw - 72px));
+  padding: 8px 10px;
+  gap: 8px 12px;
+  bottom: 10px;
+  left: 8px;
+  right: auto;
+}
+
+.map-legend--mobile .legend-title {
+  flex: 1 0 100%;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.map-legend--mobile .legend-item {
+  flex: 0 0 calc(50% - 6px);
+  min-width: 0;
+  gap: 6px;
+}
+
+.map-legend--mobile .legend-item :deep(.el-tag) {
+  font-size: 12px;
+  padding: 0 6px;
+  height: 22px;
+  line-height: 20px;
+}
 
 .side-panel {
   width: 320px;
