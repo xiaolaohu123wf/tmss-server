@@ -375,7 +375,26 @@ function togglePlay() {
   playing.value = !playing.value
 }
 
+// ── 手机端布局：与 PC 左右分栏不同，采用「上地图 / 下列表」 ──
+const isMobile = ref(window.innerWidth <= 768)
+const viewport = ref({ w: window.innerWidth, h: window.innerHeight })
+
+function syncTracksBreakpoint() {
+  viewport.value = { w: window.innerWidth, h: window.innerHeight }
+  isMobile.value = window.innerWidth <= 768
+}
+
+const TOOLBAR_RESERVE_PX = 118
+
+const tracksTableHeight = computed(() => {
+  if (!isMobile.value) return 'calc(100vh - 220px)'
+  const h = viewport.value.h
+  const mapBlock = Math.min(Math.round(h * 0.42), 320)
+  return Math.max(200, Math.floor(h - 56 - mapBlock - TOOLBAR_RESERVE_PX))
+})
+
 onMounted(async () => {
+  window.addEventListener('resize', syncTracksBreakpoint)
   try {
     vehicles.value = await vehiclesApi.list()
   } catch {
@@ -387,14 +406,15 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', syncTracksBreakpoint)
   stopPlayTimer()
 })
 </script>
 
 <template>
   <div class="tracks-page">
-    <el-container class="tracks-wrap">
-      <el-aside width="46%" class="tracks-aside">
+    <div class="tracks-wrap">
+      <aside class="tracks-aside">
         <div class="toolbar">
           <el-date-picker
             v-model="dateRange"
@@ -426,7 +446,7 @@ onUnmounted(() => {
           v-loading="loading"
           :data="tableRows"
           stripe
-          height="calc(100vh - 220px)"
+          :height="tracksTableHeight"
           highlight-current-row
           :row-key="(r: TrackRow) => r.id"
           :current-row-key="selectedId ?? undefined"
@@ -468,9 +488,9 @@ onUnmounted(() => {
             </template>
           </el-table-column>
         </el-table>
-      </el-aside>
+      </aside>
 
-      <el-main class="tracks-main">
+      <main class="tracks-main">
         <div
           class="tracks-stage"
           v-loading="pointsLoading"
@@ -523,12 +543,14 @@ onUnmounted(() => {
                 </template>
               </div>
               <div v-else-if="selectedId" class="pb-meta muted">该段无轨迹点</div>
-              <div v-else class="pb-meta muted">点击左侧表格一行加载轨迹</div>
+              <div v-else class="pb-meta muted">
+                {{ isMobile ? '点击下方表格中的一行加载轨迹' : '点击左侧表格一行加载轨迹' }}
+              </div>
             </div>
           </div>
         </div>
-      </el-main>
-    </el-container>
+      </main>
+    </div>
   </div>
 </template>
 
@@ -538,12 +560,20 @@ onUnmounted(() => {
   min-height: 520px;
 }
 .tracks-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   height: calc(100vh - 120px);
   min-height: 480px;
+  overflow: hidden;
 }
 .tracks-aside {
+  box-sizing: border-box;
+  width: 46%;
+  flex: 0 0 46%;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   padding-right: 12px;
   border-right: 1px solid #e8e8e8;
   background: #fff;
@@ -617,5 +647,51 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 2px;
   line-height: 1.25;
+}
+
+/* ── 手机：上地图 + 回放条，下列表筛选（DOM 仍为 aside→main，用 column-reverse 视觉翻转）── */
+@media (max-width: 768px) {
+  .tracks-page {
+    min-height: 0;
+  }
+  .tracks-wrap {
+    flex-direction: column-reverse;
+    height: calc(100dvh - 56px);
+    min-height: 0;
+  }
+  .tracks-aside {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 8px 8px 12px;
+    border-right: none;
+    border-top: 1px solid #e8e8e8;
+  }
+  .toolbar {
+    margin-bottom: 8px;
+  }
+  .toolbar :deep(.el-date-editor) {
+    max-width: 100% !important;
+  }
+  .tracks-main {
+    flex: 0 0 min(42vh, 300px);
+    min-height: 200px;
+    max-height: 48vh;
+    overflow: hidden;
+  }
+  .tracks-stage {
+    border-radius: 0;
+    min-height: 0;
+  }
+  .tracks-map {
+    min-height: 120px;
+    border-radius: 0;
+  }
+  .playback-bar {
+    padding: 8px 10px;
+  }
+  .pb-row {
+    gap: 6px;
+  }
 }
 </style>

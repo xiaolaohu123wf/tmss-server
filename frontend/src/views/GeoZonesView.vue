@@ -253,6 +253,7 @@ async function handleToggle(zone: GeoZone) {
 
 <template>
   <div class="geo-zones-page">
+    <!-- 布局：桌面左右分栏；手机用上地图、下业务区 -->
     <!-- ───── Map ───── -->
     <div class="map-panel">
       <div id="geo-zone-map" class="amap-container" />
@@ -280,14 +281,15 @@ async function handleToggle(zone: GeoZone) {
           </el-button>
         </div>
 
-        <el-table
-          :data="zones"
-          v-loading="loading"
-          size="small"
-          class="zone-table"
-          highlight-current-row
-          @row-click="(row: GeoZone) => { if (!isDrawing) { highlightZone(row); const p = polygonMap.get(row.id); if (p) fitPolygon(p) } }"
-        >
+        <div class="zone-table-wrap">
+          <el-table
+            :data="zones"
+            v-loading="loading"
+            size="small"
+            class="zone-table"
+            highlight-current-row
+            @row-click="(row: GeoZone) => { if (!isDrawing) { highlightZone(row); const p = polygonMap.get(row.id); if (p) fitPolygon(p) } }"
+          >
           <el-table-column label="名称" prop="name" min-width="90" show-overflow-tooltip />
           <el-table-column label="类型" width="80">
             <template #default="{ row }">
@@ -310,7 +312,8 @@ async function handleToggle(zone: GeoZone) {
               <el-button link type="danger" @click.stop="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
-        </el-table>
+          </el-table>
+        </div>
       </template>
 
       <!-- FORM mode -->
@@ -428,6 +431,7 @@ async function handleToggle(zone: GeoZone) {
 <style scoped>
 .geo-zones-page {
   display: flex;
+  flex-direction: row;
   gap: 0;
   height: calc(100vh - 116px);
   overflow: hidden;
@@ -437,6 +441,7 @@ async function handleToggle(zone: GeoZone) {
   flex: 1;
   position: relative;
   overflow: hidden;
+  min-width: 0;
 }
 
 .amap-container {
@@ -463,7 +468,12 @@ async function handleToggle(zone: GeoZone) {
   white-space: nowrap;
 }
 
-/* Right side panel */
+/* List 模式表格外包一层，便于手机端区域内滚动 */
+.zone-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .side-panel {
   width: 400px;
   flex-shrink: 0;
@@ -472,6 +482,7 @@ async function handleToggle(zone: GeoZone) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
 }
 
 .panel-header {
@@ -497,8 +508,7 @@ async function handleToggle(zone: GeoZone) {
 
 /* List mode table */
 .zone-table {
-  flex: 1;
-  overflow: hidden;
+  width: 100%;
 }
 :deep(.zone-table .el-table__body-wrapper) {
   overflow-y: auto;
@@ -541,5 +551,43 @@ async function handleToggle(zone: GeoZone) {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* ── 手机：上地图、下业务面板（与 PC 左右分栏区分）── */
+@media (max-width: 768px) {
+  .geo-zones-page {
+    flex-direction: column;
+    height: calc(100dvh - 56px);
+    min-height: 0;
+  }
+
+  .map-panel {
+    flex: 0 0 min(40vh, 280px);
+    min-height: 200px;
+    max-height: 45vh;
+    border-bottom: 1px solid #e4e7ed;
+  }
+
+  .draw-tip {
+    white-space: normal;
+    max-width: 92vw;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .side-panel {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    border-left: none;
+    border-top: none;
+  }
+
+  .zone-table-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 </style>
