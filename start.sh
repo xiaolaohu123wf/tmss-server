@@ -36,7 +36,7 @@ do_stop() {
         kill "$pid"
         local i=0
         while kill -0 "$pid" 2>/dev/null && (( i < 10 )); do
-            sleep 1; (( i++ ))
+            sleep 1; i=$(( i + 1 ))
         done
         if kill -0 "$pid" 2>/dev/null; then
             echo "[WARN] 进程未在10秒内退出，强制终止..."
