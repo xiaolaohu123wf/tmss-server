@@ -9,16 +9,17 @@ from app.db.queries.business_config import SELECT_BUSINESS_CONFIG_SQL
 
 UPDATE_BUSINESS_CONFIG_SQL = """
     UPDATE business_config SET
-        global_speed_limit = $1,
-        park_threshold_min = $2,
-        loading_dwell_min = $3,
-        unloading_dwell_min = $4,
-        alert_cooldown_s = $5,
-        hb_timeout_s = $6,
-        weather_city = $7,
-        map_center_lng = $8,
-        map_center_lat = $9,
-        transport_timeout_min = $10
+        global_speed_limit  = $1,
+        park_threshold_min  = $2,
+        loading_dwell_s     = $3,
+        unloading_dwell_s   = $4,
+        alert_cooldown_s    = $5,
+        hb_timeout_s        = $6,
+        weather_city        = $7,
+        map_center_lng      = $8,
+        map_center_lat      = $9,
+        transport_timeout_min = $10,
+        segment_buffer_min  = $11
     WHERE id = 1
 """
 
@@ -27,28 +28,30 @@ UPDATE_BUSINESS_CONFIG_SQL = """
 class BusinessConfigRow:
     global_speed_limit: int
     park_threshold_min: int
-    loading_dwell_min: int
-    unloading_dwell_min: int
+    loading_dwell_s: int
+    unloading_dwell_s: int
     alert_cooldown_s: int
     hb_timeout_s: int
     weather_city: str
     map_center_lng: float
     map_center_lat: float
     transport_timeout_min: int
+    segment_buffer_min: int = 3
 
 
 def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[name-defined]
     return BusinessConfigRow(
         global_speed_limit=int(r["global_speed_limit"]),
         park_threshold_min=int(r["park_threshold_min"]),
-        loading_dwell_min=int(r["loading_dwell_min"]),
-        unloading_dwell_min=int(r["unloading_dwell_min"]),
+        loading_dwell_s=int(r["loading_dwell_s"]),
+        unloading_dwell_s=int(r["unloading_dwell_s"]),
         alert_cooldown_s=int(r["alert_cooldown_s"]),
         hb_timeout_s=int(r["hb_timeout_s"]),
         weather_city=str(r["weather_city"]),
         map_center_lng=float(r["map_center_lng"]),
         map_center_lat=float(r["map_center_lat"]),
         transport_timeout_min=int(r["transport_timeout_min"]),
+        segment_buffer_min=int(r["segment_buffer_min"]) if r["segment_buffer_min"] is not None else 3,
     )
 
 
@@ -67,25 +70,27 @@ class BusinessConfigRepo:
         *,
         global_speed_limit: int,
         park_threshold_min: int,
-        loading_dwell_min: int,
-        unloading_dwell_min: int,
+        loading_dwell_s: int,
+        unloading_dwell_s: int,
         alert_cooldown_s: int,
         hb_timeout_s: int,
         weather_city: str,
         map_center_lng: float,
         map_center_lat: float,
         transport_timeout_min: int,
+        segment_buffer_min: int = 3,
     ) -> None:
         await conn.execute(
             UPDATE_BUSINESS_CONFIG_SQL,
             global_speed_limit,
             park_threshold_min,
-            loading_dwell_min,
-            unloading_dwell_min,
+            loading_dwell_s,
+            unloading_dwell_s,
             alert_cooldown_s,
             hb_timeout_s,
             weather_city.strip() or "Nanjing",
             map_center_lng,
             map_center_lat,
             transport_timeout_min,
+            segment_buffer_min,
         )

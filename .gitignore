@@ -58,3 +58,15 @@ docker-compose.override.yml
 .tmss.pid
 cookie.txt
 
+# Drone / photogrammetry outputs (large GeoTIFFs; keep local only)
+static/map/**/*.tif
+static/map/**/*.tiff
+static/map/**/*.vrt
+static/map/**/*.mbtiles
+
+# GCJ warp + XYZ tiles (generated locally)
+static/map/tiles_dom/
+static/map/result_warp_gcj3857.tif
+static/map/*.precursor.vrt
+static/map/orthophoto_amap_meta.json
+

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>正射影像 × 高德卫星（测试）</title>
+  <script>
+    window._AMapSecurityConfig = { securityJsCode: 'cc48ce721d87c8f2222dcd65624a6005' }
+    ;(function () {
+      const _get = HTMLCanvasElement.prototype.getContext
+      HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+        if (type === '2d') attrs = Object.assign({ willReadFrequently: true }, attrs)
+        return _get.call(this, type, attrs)
+      }
+    })()
+  </script>
+  <script src="https://webapi.amap.com/maps?v=2.0&key=91974428fa4957121585bd2d90d842d4"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; width: 100%; }
+    #map { height: 100%; width: 100%; background: #000; }
+    #bar {
+      position: absolute; z-index: 500; left: 12px; top: 12px;
+      background: rgba(255,255,255,.92); padding: 10px 14px; border-radius: 8px;
+      font: 13px/1.6 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,.15);
+      max-width: min(320px, calc(100vw - 24px));
+    }
+    #bar h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .divider { border: none; border-top: 1px solid #e2e8f0; margin: 6px 0; }
+    .section-label { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+    #bar label { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 2px 0; }
+    #bar input[type="range"] { width: 120px; }
+    #bar .row-opacity { display: flex; align-items: center; gap: 8px; margin-left: 22px; }
+    #bar .row-opacity input[type="range"] { width: 100px; }
+    #err { color: #b91c1c; margin-top: 8px; font-size: 12px; white-space: pre-wrap; }
+    #hint { color: #475569; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <h3>正射 DOM · 对齐检查</h3>
+    <hr class="divider" />
+
+    <div class="section-label">图层</div>
+
+    <label>
+      <input type="checkbox" id="ck-satellite" checked />
+      高德卫星底图
+    </label>
+
+    <label>
+      <input type="checkbox" id="ck-dom" checked />
+      正射影像（DOM）
+    </label>
+    <div class="row-opacity">
+      <span id="op-lbl">95%</span>
+      <input type="range" id="op" min="0" max="100" value="95" title="正射层透明度" />
+    </div>
+
+    <hr class="divider" />
+    <div class="section-label">底色</div>
+    <label>
+      <input type="checkbox" id="ck-black" checked />
+      黑色底（隐藏卫星时可见）
+    </label>
+
+    <div id="err"></div>
+    <div id="hint">若正射层空白：先运行 <code>scripts/tile_dom_gcj_amap.sh</code>。</div>
+  </div>
+  <div id="map"></div>
+  <script>
+    const errEl = document.getElementById('err')
+
+    function tileUrl(z, x, y, suffix) {
+      return suffix + '/' + z + '/' + x + '/' + y + '.jpg'
+    }
+
+    fetch('/static/map/orthophoto_amap_meta.json', { cache: 'no-store' })
+      .then((r) => {
+        if (!r.ok) throw new Error('meta HTTP ' + r.status + ' — 请生成 orthophoto_amap_meta.json')
+        return r.json()
+      })
+      .then((meta) => {
+        const suffix = meta.tileUrlSuffix || '/static/map/tiles_dom'
+        const [lng, lat] = meta.center_gcj_lnglat || [109.4753, 30.2832]
+        const sw = meta.bounds_gcj_lnglat.southwest
+        const ne = meta.bounds_gcj_lnglat.northeast
+
+        // 卫星层单独创建，方便控制显隐
+        const satelliteLayer = new AMap.TileLayer.Satellite({ zIndex: 2 })
+
+        const map = new AMap.Map('map', {
+          zoom: 16,
+          center: [lng, lat],
+          // 不在 layers 里放，避免无法独立控制
+          layers: [],
+          background: 'transparent',
+        })
+        map.add(satelliteLayer)
+
+        AMap.plugin(['AMap.Scale', 'AMap.ToolBar'], function () {
+          map.addControl(new AMap.Scale())
+          map.addControl(new AMap.ToolBar({ liteStyle: true }))
+        })
+
+        // 正射影像层
+        const domLayer = new AMap.TileLayer({
+          zIndex: 6,
+          opacity: 0.95,
+          getTileUrl: function (x, y, z) {
+            return tileUrl(z, x, y, suffix)
+          },
+        })
+        map.add(domLayer)
+
+        // ── 高德卫星开关 ──────────────────────────────
+        const ckSatellite = document.getElementById('ck-satellite')
+        ckSatellite.addEventListener('change', () => {
+          satelliteLayer[ckSatellite.checked ? 'show' : 'hide']()
+        })
+
+        // ── 正射层开关 ────────────────────────────────
+        const ckDom = document.getElementById('ck-dom')
+        ckDom.addEventListener('change', () => {
+          domLayer[ckDom.checked ? 'show' : 'hide']()
+        })
+
+        // ── 透明度滑块 ────────────────────────────────
+        const op = document.getElementById('op')
+        const opLbl = document.getElementById('op-lbl')
+        op.addEventListener('input', () => {
+          const v = Number(op.value) / 100
+          domLayer.setOpacity(v)
+          opLbl.textContent = Math.round(v * 100) + '%'
+        })
+
+        // ── 黑色底开关（控制 #map 背景色）────────────
+        const ckBlack = document.getElementById('ck-black')
+        const mapEl = document.getElementById('map')
+        ckBlack.addEventListener('change', () => {
+          mapEl.style.background = ckBlack.checked ? '#000' : 'transparent'
+        })
+
+        try {
+          map.setBounds(new AMap.Bounds(sw, ne), false, [40, 40, 40, 40])
+        } catch (e) {
+          console.warn(e)
+        }
+      })
+      .catch((e) => {
+        errEl.textContent = String(e.message || e)
+      })
+  </script>
+</body>
+</html>

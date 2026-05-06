@@ -317,7 +317,7 @@ onMounted(loadConfig)
           type="info"
           :closable="false"
           style="margin-bottom:12px"
-          title="按「起终点围栏对」为已有轨迹段重新打标：起=取土区+终=弃土区→装料；起=弃土区+终=取土区→卸料；其他（同侧/均不在围栏）→清除标签。不重建段结构。"
+          title="在现有轨迹段上打装/卸料标签，不重建段结构。仅当起点在围栏内且停留时长达到系统设置的最低阈值时才标注，不会将短暂驻留误判为装/卸料。"
           show-icon
         />
         <el-form label-width="100px" inline>
@@ -348,7 +348,7 @@ onMounted(loadConfig)
           type="warning"
           :closable="false"
           style="margin-bottom:12px"
-          title="按时间间隔重建所有轨迹段（不按围栏边界切），保留完整取土→弃土运输段；再按起终点围栏对打装/卸料标签。适合新增围栏后重分析历史数据。操作不可撤销。"
+          title="删除并重建指定天数内所有轨迹段，基于原始定位点按时间间隔+围栏边界重新切割，同时自动打装/卸料标签。适合新增围栏后需要完整重分析历史数据的场景。操作不可撤销。"
           show-icon
         />
         <el-form label-width="100px" inline>

@@ -32,17 +32,20 @@ class DeviceState:
     active_zone_ids: set = field(default_factory=set)
     # 轨迹分段追踪
     current_segment_id: Optional[int] = None
+    current_segment_type: Optional[str] = None   # 'loading'|'unloading'|'transport_loaded'|...
     last_point_at: Optional[datetime] = None
-    # 停车驻留检测（位移半径 < PARK_STATIONARY_RADIUS_M 即视为停车）
+    last_point_lat: Optional[float] = None
+    last_point_lng: Optional[float] = None
+    # 停车驻留检测（100 m 半径内持续 park_threshold_min 分钟 → idle）
     stationary_anchor_lat: Optional[float] = None
     stationary_anchor_lng: Optional[float] = None
-    stationary_since: Optional[datetime] = None   # 最后一次移动超出半径的时刻
-    # 作业状态机：当前驻留区的进入时刻 (用于 dwell 计算)
+    stationary_since: Optional[datetime] = None
+    # 围栏驻留计时：进入装/卸料围栏时记录，用于确认 loading/unloading
     zone_entry_at: Optional[datetime] = None
-    zone_entry_id: Optional[int] = None   # 正在计时驻留的 zone_id
-    # 当前段类型：None=普通, 'loading'=装料, 'unloading'=卸料
-    current_segment_type: Optional[str] = None
-    # 运输超时计时：进入 TRANSPORT_LOADED / TRANSPORT_EMPTY 时记录起始时刻
+    zone_entry_id: Optional[int] = None
+    zone_entry_lat: Optional[float] = None
+    zone_entry_lng: Optional[float] = None
+    # 运输超时计时：进入 transport_loaded/transport_empty 时记录
     transport_started_at: Optional[datetime] = None
     # 防止短暂重连期间两个连接并发开段（asyncio 协作式，Lock 足够）
     segment_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -142,11 +145,17 @@ class DeviceRegistry:
         # 车辆绑定发生变化，重置轨迹段指针：
         # 下一个 GPS 包到达时，旧段会被正确关闭并以新 vehicle_id 开启新段。
         state.current_segment_id = None
+        state.current_segment_type = None
         state.last_point_at = None
+        state.last_point_lat = None
+        state.last_point_lng = None
         state.stationary_anchor_lat = None
         state.stationary_anchor_lng = None
         state.stationary_since = None
-        state.current_segment_type = None
+        state.zone_entry_at = None
+        state.zone_entry_id = None
+        state.zone_entry_lat = None
+        state.zone_entry_lng = None
         state.transport_started_at = None
         await logger.ainfo(
             "device_binding_updated",

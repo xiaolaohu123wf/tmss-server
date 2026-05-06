@@ -6,6 +6,8 @@ from typing import Optional
 
 import asyncpg
 
+# 段列表查询：lat/lng 来自 segment 表存储的起终坐标；
+# loc_type 通过 LATERAL 从 location_point 时间范围内取首/末点获得
 _SEGMENT_LIST_SQL = """
     SELECT
         ts.id,
@@ -20,24 +22,30 @@ _SEGMENT_LIST_SQL = """
         ts.end_lng,
         ts.point_count,
         ts.segment_type,
-        lp_end.lat AS last_lat,
-        lp_end.lng AS last_lng,
+        lp_end.lat  AS last_lat,
+        lp_end.lng  AS last_lng,
         COALESCE(lp_start.loc_type::text, 'gps') AS start_loc_type,
-        COALESCE(lp_end.loc_type::text, 'gps') AS end_loc_type
+        COALESCE(lp_end.loc_type::text,   'gps') AS end_loc_type
     FROM track_segment ts
     LEFT JOIN vehicle v
         ON v.id = ts.vehicle_id AND v.deleted_at IS NULL
     LEFT JOIN LATERAL (
         SELECT loc_type
         FROM location_point
-        WHERE segment_id = ts.id
+        WHERE device_id = ts.device_id
+          AND recorded_at >= ts.started_at
+          AND recorded_at <= COALESCE(ts.ended_at, NOW())
+          AND loc_type = 'gps'
         ORDER BY recorded_at ASC, id ASC
         LIMIT 1
     ) lp_start ON TRUE
     LEFT JOIN LATERAL (
         SELECT lat, lng, loc_type
         FROM location_point
-        WHERE segment_id = ts.id
+        WHERE device_id = ts.device_id
+          AND recorded_at >= ts.started_at
+          AND recorded_at <= COALESCE(ts.ended_at, NOW())
+          AND loc_type = 'gps'
         ORDER BY recorded_at DESC, id DESC
         LIMIT 1
     ) lp_end ON TRUE
@@ -52,20 +60,32 @@ _SEGMENT_LIST_SQL = """
     LIMIT $5
 """
 
+# 里程计算：通过 device_id + 时间范围关联定位点
 _DISTANCE_KM_SQL = """
-    WITH ordered AS (
+    WITH segs AS (
+        SELECT id AS segment_id, device_id,
+               started_at,
+               COALESCE(ended_at, NOW()) AS ended_at
+        FROM track_segment
+        WHERE id = ANY($1::BIGINT[])
+    ),
+    ordered AS (
         SELECT
-            segment_id,
-            lat::DOUBLE PRECISION AS lat,
-            lng::DOUBLE PRECISION AS lng,
-            LAG(lat::DOUBLE PRECISION) OVER (
-                PARTITION BY segment_id ORDER BY recorded_at, id
+            s.segment_id,
+            lp.lat::DOUBLE PRECISION  AS lat,
+            lp.lng::DOUBLE PRECISION  AS lng,
+            LAG(lp.lat::DOUBLE PRECISION) OVER (
+                PARTITION BY s.segment_id ORDER BY lp.recorded_at, lp.id
             ) AS prev_lat,
-            LAG(lng::DOUBLE PRECISION) OVER (
-                PARTITION BY segment_id ORDER BY recorded_at, id
+            LAG(lp.lng::DOUBLE PRECISION) OVER (
+                PARTITION BY s.segment_id ORDER BY lp.recorded_at, lp.id
             ) AS prev_lng
-        FROM location_point
-        WHERE segment_id = ANY($1::BIGINT[])
+        FROM segs s
+        JOIN location_point lp
+            ON  lp.device_id   = s.device_id
+            AND lp.recorded_at >= s.started_at
+            AND lp.recorded_at <= s.ended_at
+            AND lp.loc_type = 'gps'
     )
     SELECT
         segment_id,
@@ -92,16 +112,23 @@ _DISTANCE_KM_SQL = """
     GROUP BY segment_id
 """
 
+# 定位点查询：通过 device_id + 时间范围（含可选缓冲）获取
+# $1 = segment_id, $2 = max_points, $3 = buffer_min（运输段用 3，其余用 0）
 _POINTS_SQL = """
     SELECT
-        recorded_at,
-        lat::DOUBLE PRECISION,
-        lng::DOUBLE PRECISION,
-        speed::DOUBLE PRECISION,
-        COALESCE(loc_type::TEXT, 'gps') AS loc_type
-    FROM location_point
-    WHERE segment_id = $1
-    ORDER BY recorded_at ASC, id ASC
+        lp.recorded_at,
+        lp.lat::DOUBLE PRECISION,
+        lp.lng::DOUBLE PRECISION,
+        lp.speed::DOUBLE PRECISION,
+        COALESCE(lp.loc_type::TEXT, 'gps') AS loc_type
+    FROM track_segment ts
+    JOIN location_point lp
+        ON  lp.device_id   = ts.device_id
+        AND lp.recorded_at >= (ts.started_at    - ($3 * INTERVAL '1 minute'))
+        AND lp.recorded_at <= (COALESCE(ts.ended_at, NOW()) + ($3 * INTERVAL '1 minute'))
+        AND lp.loc_type = 'gps'
+    WHERE ts.id = $1
+    ORDER BY lp.recorded_at ASC, lp.id ASC
     LIMIT $2
 """
 
@@ -193,8 +220,9 @@ class TrackQueryRepo:
         conn: asyncpg.Connection,  # type: ignore[type-arg]
         segment_id: int,
         max_points: int = 25000,
+        buffer_min: int = 0,
     ) -> list[TrackPointRow]:
-        rows = await conn.fetch(_POINTS_SQL, segment_id, max_points)
+        rows = await conn.fetch(_POINTS_SQL, segment_id, max_points, buffer_min)
         return [
             TrackPointRow(
                 recorded_at=r["recorded_at"],
@@ -206,10 +234,10 @@ class TrackQueryRepo:
             for r in rows
         ]
 
-    async def delete_segment(self, conn: asyncpg.Connection, segment_id: int) -> bool:  # type: ignore[type-arg]
-        """删除轨迹段及其下属定位点（管理员）。"""
-        async with conn.transaction():
-            await conn.execute("DELETE FROM location_point WHERE segment_id = $1", segment_id)
-            status = await conn.execute("DELETE FROM track_segment WHERE id = $1", segment_id)
+    async def delete_segment(
+        self, conn: asyncpg.Connection, segment_id: int  # type: ignore[type-arg]
+    ) -> bool:
+        """删除轨迹段（location_point 按时间范围关联，删除段记录即可）。"""
+        status = await conn.execute("DELETE FROM track_segment WHERE id = $1", segment_id)
         parts = status.split()
         return len(parts) >= 2 and parts[0] == "DELETE" and int(parts[1]) > 0

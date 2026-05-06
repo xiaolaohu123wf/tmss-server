@@ -14,6 +14,20 @@ CLOSE_SEGMENT_SQL = """
       AND ended_at IS NULL
 """
 
+UPDATE_SEGMENT_TYPE_SQL = """
+    UPDATE track_segment
+    SET segment_type = $2
+    WHERE id = $1
+"""
+
+UPDATE_SEGMENT_START_SQL = """
+    UPDATE track_segment
+    SET started_at = $2,
+        start_lat  = $3,
+        start_lng  = $4
+    WHERE id = $1
+"""
+
 INCREMENT_SEGMENT_POINTS_SQL = """
     UPDATE track_segment
     SET point_count = point_count + 1

@@ -13,7 +13,6 @@ from app.db.queries.location import INSERT_LOCATION_BATCH_COLUMNS
 class LocationRow:
     device_id: int
     vehicle_id: Optional[int]
-    segment_id: Optional[int]
     recorded_at: datetime
     lat: float
     lng: float
@@ -32,7 +31,7 @@ class LocationRepo:
             return
         records = [
             (
-                p.device_id, p.vehicle_id, p.segment_id,
+                p.device_id, p.vehicle_id,
                 p.recorded_at, p.lat, p.lng, p.speed, p.altitude, p.loc_type,
             )
             for p in points

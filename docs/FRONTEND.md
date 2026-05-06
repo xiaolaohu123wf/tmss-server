@@ -90,16 +90,16 @@ frontend/
 │   │
 │   ├── views/
 │   │   ├── LoginView.vue          # 登录页（浅蓝/水滴图标/系统名称）
-│   │   ├── DashboardView.vue      # 实时大屏（地图 + SSE + 告警）
+│   │   ├── DashboardView.vue      # 实时大屏（地图 + SSE + 围栏叠加 + 俯视卡车图标）
 │   │   ├── VehiclesView.vue       # 车辆管理（含家用车型/驾驶员姓名）
 │   │   ├── DevicesView.vue        # 设备管理（管理员可删除）
-│   │   ├── GeoZonesView.vue       # 围栏管理（含地图绘制）
+│   │   ├── GeoZonesView.vue       # 围栏管理（卫星图层 + 图层切换 + 近24h轨迹叠加）
 │   │   ├── EventsView.vue         # 事件查询
-│   │   ├── TracksView.vue         # 历史轨迹查询与回放（AMap Polyline + 管理员删除）
+│   │   ├── TracksView.vue         # 历史轨迹查询与回放（装/卸料标签 + 围栏叠加 + 管理员删除）
 │   │   ├── UsersView.vue          # 用户管理
 │   │   ├── FleetsView.vue         # 车队管理（manager only）
 │   │   ├── FleetProfileView.vue   # 车队长查看/编辑本队信息（fleet_captain）
-│   │   └── SettingsView.vue       # 系统设置（二次验证）
+│   │   └── SettingsView.vue       # 系统设置（三级阈值 + 地图中心 + 历史重分析工具）
 │   │
 │   ├── App.vue                # 根组件（scrollbar-gutter 全局样式）
 │   └── main.ts                # 入口（注册 Element Plus、Pinia、Router）
@@ -117,16 +117,16 @@ frontend/
 | 路径 | 组件 | 角色限制 | 主要功能 |
 |------|------|----------|----------|
 | `/login` | `LoginView` | 全部 | 账号密码登录，Cookie Session |
-| `/dashboard` | `DashboardView` | 全部已登录 | 实时地图 + SSE 位置/告警 + 在线车辆列表 |
+| `/dashboard` | `DashboardView` | 全部已登录 | 实时地图 + SSE + 在线车辆列表 + 围栏叠加开关 + 俯视卡车方向 |
 | `/vehicles` | `VehiclesView` | 全部已登录 | 车辆列表 CRUD + 绑定/解绑设备 + 家用车型 |
 | `/devices` | `DevicesView` | 全部已登录 | 设备列表 + 在线状态 + 手动下发指令（manager 可删除）|
-| `/geo-zones` | `GeoZonesView` | 全部已登录 | 高德地图绘制多边形 + 围栏 CRUD |
+| `/geo-zones` | `GeoZonesView` | 全部已登录 | 高德地图绘制多边形 + 围栏 CRUD + 图层切换（默认卫星+路网）|
 | `/events` | `EventsView` | 全部已登录 | 事件分页查询（时间/类型/车辆过滤）|
-| `/tracks` | `TracksView` | 全部已登录 | 历史轨迹查询 + 地图回放 + 速度滑块（manager 可删除段）|
+| `/tracks` | `TracksView` | 全部已登录 | 历史轨迹查询 + 装/卸料标签 + 围栏叠加 + 地图回放（manager 可删除段）|
 | `/users` | `UsersView` | **manager only** | 用户 CRUD + 角色/车队分配 |
 | `/fleets` | `FleetsView` | **manager only** | 车队 CRUD |
 | `/fleet-profile` | `FleetProfileView` | **fleet_captain** | 查看本队名称、编辑备注 |
-| `/settings` | `SettingsView` | **manager only** | 业务参数配置（**需二次密码验证**）|
+| `/settings` | `SettingsView` | **manager only** | 三级阈值配置 + 地图中心 + 历史重分析工具（**需二次密码验证**）|
 
 ### 权限守卫逻辑
 
@@ -204,21 +204,39 @@ watch(lastMessage, (frame) => {
 ### useAmap 封装
 
 ```typescript
-const { map, init, createMarker, createPolygon, startDrawPolygon } = useAmap('map-container')
+const {
+  map, init, setLayers,
+  createMarker, createPolyline,
+  createPolygon, removePolygon,
+  startDrawPolygon, fitPolygon,
+} = useAmap('map-container')
 
-onMounted(() => init())
+onMounted(() => init([lng, lat]))  // 可传入地图中心点
 
-// 创建车辆 Marker
+// 创建车辆 Marker（俯视 SVG，anchor:'center'）
 const marker = createMarker([116.39, 39.91], vehicleData)
 
-// 创建围栏 Polygon
-const polygon = createPolygon(coordinates, zoneData, '#1890ff')
+// 创建围栏 Polygon（color + fillOpacity）
+const polygon = createPolygon(coordinates, zoneData, '#1890ff', 0.15)
+
+// 图层切换（标准/卫星/卫星+路网/路况）
+setLayers([new AMap.TileLayer.Satellite(), new AMap.TileLayer.RoadNet()])
 
 // 绘制模式（围栏管理页）
 startDrawPolygon((path) => {
   form.coordinates = path  // 用户完成绘制后回调
 })
 ```
+
+### 车辆方向指示
+
+大屏 `DashboardView` 的车辆 Marker 使用**俯视（鸟瞰）卡车 SVG**：
+
+- SVG 默认朝北（↑），`transform: rotate(headingDeg)` 随实时方位角旋转
+- `headingDeg` 通过最近 trail 中最多回溯 5 步的方位角 `atan2(Δlng, Δlat)` 计算
+- 仅在方向变化 > 8° 或作业状态变化时调用 `setContent()`（避免频繁重建 DOM）
+- `anchor: 'center'`，车身几何中心精确落在 GPS 坐标点
+- 车牌标签绝对定位在 SVG 上方，不随旋转偏移
 
 ### 车辆状态颜色
 
@@ -262,6 +280,10 @@ await post('/admin/config', config.value, {
 | P6 | 历史轨迹查询（AMap Polyline + 回放 + GCJ-02 + 管理员删除）| ✅ 完成 |
 | P7 | SSE 联调 + TabBar 多标签页 + 性能优化 | ✅ 完成 |
 | P8 | 登录页重设计（科技蓝主题 + 水滴图标 + 系统名称）| ✅ 完成 |
+| P9 | 装/卸料段标注 + 驻留段过滤 + 跳变断线 + 轨迹页围栏叠加 | ✅ 完成 |
+| P10 | 大屏围栏叠加开关 + 俯视卡车方向指示 + 图层切换 | ✅ 完成 |
+| P11 | 系统设置三级阈值说明 + 历史重分析工具 + 运输超时配置 | ✅ 完成 |
+| P12 | 系统更名为"姚家平车辆智能监管平台" | ✅ 完成 |
 
 ---
 

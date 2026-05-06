@@ -15,7 +15,7 @@
 | 车队创建后无配套账号 | 须 admin 手动建账号再分配 | 创建车队时自动生成账号密码并返回给管理员 |
 | 车队长无法查看/编辑自己车队 | `GET/PUT /api/admin/fleets` 仅 manager 可访问 | 车队长可读取并编辑本队备注 |
 | 设备绑定无车队隔离校验 | 车队长可把设备绑到其他车队的车辆 | 绑定时强校验"设备→车辆→车队"归属 |
-| 大屏无轨迹拖影、无车牌标注 | 仅显示点位 Marker | 10s 拖影折线 + 小卡车图标 + 车牌标注 |
+| 大屏无轨迹拖影、无车牌标注 | 仅显示点位 Marker | 10s 拖影折线 + **俯视卡车图标**（含方向旋转）+ 车牌标注 |
 
 ---
 
@@ -245,37 +245,29 @@ new AMap.Polyline({
 })
 ```
 
-### 5.3 小卡车图标 + 车牌标注
+### 5.3 俯视卡车图标 + 方向旋转 + 车牌标注 ✅（已实现）
 
-**AMap 自定义 Marker 方案：**
+**最终方案：俯视（鸟瞰）内联 SVG，`anchor: 'center'`，按行驶方向旋转。**
 
-使用 `AMap.Marker` 的 `content` 属性（HTML 字符串），将图标与车牌合并为一个 DOM 元素，避免两个叠加层的对齐问题：
+- SVG 默认朝北（↑），`transform: rotate(headingDeg)` 随方位角旋转
+- 方位角由最近 trail（最多回溯 5 步）的 `atan2(Δlng, Δlat)` 计算，位移 < 1e-6° 时保持上次方向
+- `anchor: 'center'` 使车身几何中心精确落在 GPS 坐标
+- 车牌标签 `position:absolute; bottom:calc(100%+4px)` 浮于 SVG 上方，不随旋转偏移
+- 仅在方向变化 > 8° 或作业状态变化时调用 `setContent()`（避免频繁重建 DOM）
 
 ```typescript
-function makeVehicleContent(licensePlate: string, workState: WorkState): string {
-  const color = WORK_STATE_COLOR[workState] ?? '#8c8c8c'
-  return `
-    <div class="vehicle-marker" style="text-align:center; transform:translate(-50%,-100%)">
-      <svg width="28" height="22" viewBox="0 0 28 22" fill="none">
-        <!-- 小卡车 SVG（cab + body） -->
-        <rect x="1" y="8" width="16" height="10" rx="2" fill="${color}"/>
-        <rect x="17" y="11" width="8" height="7" rx="1" fill="${color}"/>
-        <circle cx="6"  cy="19" r="2.5" fill="#333"/>
-        <circle cx="20" cy="19" r="2.5" fill="#333"/>
-        <rect x="2" y="9" width="6" height="5" rx="1" fill="rgba(255,255,255,0.5)"/>
-      </svg>
-      <div style="
-        background:rgba(0,0,0,0.65);color:#fff;
-        font-size:11px;padding:1px 4px;border-radius:3px;
-        white-space:nowrap;margin-top:2px">
-        ${licensePlate}
-      </div>
-    </div>
-  `
-}
+// 俯视卡车 SVG（24×34，车头朝上=北）
+<svg width="24" height="34" viewBox="0 0 24 34">
+  <rect x="3" y="4" width="18" height="28" rx="3" fill="${color}"/>   // 车身
+  <path d="M 3 8 L 12 0 L 21 8 Z" fill="${color}"/>                   // 前鼻尖（北）
+  <rect x="5" y="4" width="14" height="9" rx="1.5" fill="rgba(190,230,255,0.80)"/>  // 前挡风玻璃
+  <line x1="5" y1="15" x2="19" y2="15" stroke="rgba(0,0,0,0.18)" stroke-width="1.2"/>  // 驾驶室分隔
+  <rect x="0" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>    // 前左轮
+  <rect x="20" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>   // 前右轮
+  <rect x="0" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>   // 后左轮
+  <rect x="20" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>  // 后右轮
+</svg>
 ```
-
-> **待确认**：是否使用现成 SVG 图标文件（如项目 `static/` 目录下放置 `truck.svg`），还是使用上述内联 SVG？内联方案无需额外资源请求，颜色可按作业状态动态改变。
 
 ---
 

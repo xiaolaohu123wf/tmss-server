@@ -1,19 +1,16 @@
 """
-轨迹分段服务。
+轨迹分段实时服务（v1.2.0）。
 
-每个有效 GPS 包到达时调用 get_or_advance_segment()，
-返回当前应使用的 segment_id（确保已在 DB 中建立记录）。
+每个 GPS 包到达时调用 process_gps_point()，该函数驱动与批处理 SegmentFSM
+相同的六态状态机，但在 DeviceState（内存）+ DB（track_segment）上实时操作。
 
-分段规则（满足任一即开新段）：
-  1. 时间间隔：上一包与当前包时刻差 ≥ park_threshold_min 分钟
-  2. 停车驻留：距最后一次"移动"（位移 > PARK_STATIONARY_RADIUS_M 米）已超 park_threshold_min 分钟
-     ⚠ 当 suppress_stationary_split=True 时跳过规则 2（装/卸料状态下保持一条段）
-  - 首包：开启新段
-  - 否则：续接当前段
-
-特殊操作：
-  switch_segment_type() — 工作状态切换时（装/卸料开始/结束）调用，
-  关闭当前段并开启指定类型的新段，同步更新 DeviceState。
+六种段类型（详见 ARCHITECTURE.md §附录E）：
+  loading          装料中
+  unloading        卸料中
+  transport_loaded 重载运输中
+  transport_empty  空载中
+  unknown          未知状态
+  idle             停车（默认隐藏）
 """
 from __future__ import annotations
 
@@ -25,230 +22,377 @@ import asyncpg
 import structlog
 
 from app.core.device_registry import DeviceState
+from app.core.enums import WorkState
+from app.db.repos.geo_zone_repo import GeoZoneRow
 from app.db.repos.track_segment_repo import TrackSegmentRepo
+from app.services.segment_resegment_service import IDLE_RADIUS_M, _haversine_m
 
 logger = structlog.get_logger()
 
 _ts_repo = TrackSegmentRepo()
 
-# 停车半径阈值（米）：设备在此半径内 park_threshold_min 分钟即视为停车
-PARK_STATIONARY_RADIUS_M = 10.0
+_TRANSPORT_TYPES = frozenset(["transport_loaded", "transport_empty"])
+_WORK_ZONE_TYPES = frozenset(["loading", "unloading"])
+
+# WorkState 与 segment_type 的映射
+_SEG_TO_WORK_STATE: dict[str, WorkState] = {
+    "loading": WorkState.LOADING,
+    "unloading": WorkState.UNLOADING,
+    "transport_loaded": WorkState.TRANSPORT_LOADED,
+    "transport_empty": WorkState.TRANSPORT_EMPTY,
+    "unknown": WorkState.UNKNOWN,
+    "idle": WorkState.IDLE,
+}
 
 
-def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """Haversine 距离（米），适用于短距离（误差 < 0.1%）。"""
-    r = 6_371_000.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lng2 - lng1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    return r * 2 * math.asin(math.sqrt(a))
-
-
-async def get_or_advance_segment(
+async def process_gps_point(
     state: DeviceState,
     lat: float,
     lng: float,
     recorded_at: datetime,
-    conn: asyncpg.Connection,  # type: ignore[type-arg]
+    zones_at_point: list[GeoZoneRow],
+    *,
+    loading_dwell_s: int,
+    unloading_dwell_s: int,
     park_threshold_min: int,
-    suppress_stationary_split: bool = False,
-) -> int:
+    transport_timeout_min: int,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> None:
     """
-    返回当前有效的 segment_id（int）。
-    suppress_stationary_split=True 时跳过规则 2（装/卸料期间不按驻留切段）。
+    实时 GPS 包处理：更新 DeviceState 中的轨迹段状态并同步到 DB。
+    替换旧版 get_or_advance_segment() + work_state_service.update()。
     """
+    from app.core.enums import ZoneType
+    loading_zone = next(
+        (z for z in zones_at_point if z.zone_type == ZoneType.LOADING), None
+    )
+    unloading_zone = next(
+        (z for z in zones_at_point if z.zone_type == ZoneType.UNLOADING), None
+    )
+
     async with state.segment_lock:
-        return await _get_or_advance_segment_locked(
-            state, lat, lng, recorded_at, conn, park_threshold_min, suppress_stationary_split
+        await _process_locked(
+            state,
+            lat=lat,
+            lng=lng,
+            recorded_at=recorded_at,
+            loading_zone=loading_zone,
+            unloading_zone=unloading_zone,
+            loading_dwell_s=loading_dwell_s,
+            unloading_dwell_s=unloading_dwell_s,
+            park_threshold_min=park_threshold_min,
+            transport_timeout_min=transport_timeout_min,
+            conn=conn,
         )
 
+    # 更新最后已知坐标（无需在锁内）
+    state.last_point_at = recorded_at
+    state.last_point_lat = lat
+    state.last_point_lng = lng
 
-async def _get_or_advance_segment_locked(
+
+async def _process_locked(
     state: DeviceState,
+    *,
     lat: float,
     lng: float,
     recorded_at: datetime,
-    conn: asyncpg.Connection,  # type: ignore[type-arg]
+    loading_zone: Optional[GeoZoneRow],
+    unloading_zone: Optional[GeoZoneRow],
+    loading_dwell_s: int,
+    unloading_dwell_s: int,
     park_threshold_min: int,
-    suppress_stationary_split: bool,
-) -> int:
-    now = recorded_at
+    transport_timeout_min: int,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> None:
+    active_zone = loading_zone or unloading_zone
 
+    # ── 首次启动或重启恢复 ────────────────────────────────────────────────
     if state.current_segment_id is None:
-        # 服务重启或短暂断线重连后，从 DB 恢复开放段
-        existing = await _ts_repo.find_open_by_device(conn, state.device_id)
-        if existing:
-            if existing.vehicle_id == state.vehicle_id:
-                state.current_segment_id = existing.id
-                state.current_segment_type = existing.segment_type
-                last_ts = await conn.fetchval(
-                    "SELECT recorded_at FROM location_point"
-                    " WHERE segment_id = $1 ORDER BY recorded_at DESC LIMIT 1",
-                    existing.id,
-                )
-                state.last_point_at = last_ts if last_ts is not None else existing.started_at
-            else:
-                end_lat = existing.start_lat or lat
-                end_lng = existing.start_lng or lng
-                await _ts_repo.close_segment(
-                    conn,
-                    segment_id=existing.id,
-                    ended_at=now,
-                    end_lat=end_lat,
-                    end_lng=end_lng,
-                )
-                await logger.ainfo(
-                    "track_segment_closed_vehicle_changed",
-                    device_id=state.device_id,
-                    segment_id=existing.id,
-                    old_vehicle_id=existing.vehicle_id,
-                    new_vehicle_id=state.vehicle_id,
-                )
+        await _recover_or_open_unknown(state, lat, lng, recorded_at, conn)
+        return  # 本次包直接归入恢复/新建的段
 
-    need_new = False
+    # ── 围栏区域逻辑 ──────────────────────────────────────────────────────
+    if active_zone:
+        zone_type = "loading" if loading_zone else "unloading"
+        dwell_threshold = loading_dwell_s if loading_zone else unloading_dwell_s
 
-    # ── 规则 1：无当前段（首包） ──────────────────────────────────────────────
-    if state.current_segment_id is None:
-        need_new = True
+        if state.zone_entry_id != active_zone.id:
+            state.zone_entry_id = active_zone.id
+            state.zone_entry_at = recorded_at
+            state.zone_entry_lat = lat
+            state.zone_entry_lng = lng
 
-    # ── 规则 2：时间间隔分段 ──────────────────────────────────────────────────
-    elif state.last_point_at is not None:
-        gap_min = (now - state.last_point_at).total_seconds() / 60.0
-        if gap_min >= park_threshold_min:
-            need_new = True
-            await logger.adebug(
-                "segment_split_time_gap",
+        # 驻留阈值确认
+        if (
+            state.current_segment_type not in _WORK_ZONE_TYPES
+            and state.zone_entry_at is not None
+            and (recorded_at - state.zone_entry_at).total_seconds() >= dwell_threshold
+        ):
+            entry_at = state.zone_entry_at
+            entry_lat = state.zone_entry_lat or lat
+            entry_lng = state.zone_entry_lng or lng
+
+            # 回溯关闭前段（结束于 zone_entry_at）
+            await _close_segment(state, ended_at=entry_at, end_lat=entry_lat, end_lng=entry_lng, conn=conn)
+
+            # 开启 loading/unloading 段（从 zone_entry_at 开始）
+            seg_id = await _ts_repo.open_segment(
+                conn,
                 device_id=state.device_id,
-                gap_min=round(gap_min, 1),
+                started_at=entry_at,
+                start_lat=entry_lat,
+                start_lng=entry_lng,
+                vehicle_id=state.vehicle_id,
+                segment_type=zone_type,
+            )
+            state.current_segment_id = seg_id
+            state.current_segment_type = zone_type
+            state.transport_started_at = None
+            # 进入围栏后清除停车锚点（装/卸料区内不做 idle 检测）
+            state.stationary_anchor_lat = None
+            state.stationary_anchor_lng = None
+            state.stationary_since = None
+
+            await logger.ainfo(
+                "segment_dwell_confirmed",
+                device_id=state.device_id,
+                seg_id=seg_id,
+                zone_type=zone_type,
+                entry_at=entry_at.isoformat(),
             )
 
-    # ── 规则 3：停车驻留分段（suppress_stationary_split=True 时跳过）────────
-    if not need_new and not suppress_stationary_split and state.current_segment_id is not None:
+    else:
+        # 在围栏外
+        if state.zone_entry_id is not None:
+            # 刚离开围栏
+            if state.current_segment_type in _WORK_ZONE_TYPES:
+                prev = state.current_segment_type
+                await _close_segment(state, ended_at=recorded_at, end_lat=lat, end_lng=lng, conn=conn)
+                next_type = "transport_loaded" if prev == "loading" else "transport_empty"
+                seg_id = await _ts_repo.open_segment(
+                    conn,
+                    device_id=state.device_id,
+                    started_at=recorded_at,
+                    start_lat=lat,
+                    start_lng=lng,
+                    vehicle_id=state.vehicle_id,
+                    segment_type=next_type,
+                )
+                state.current_segment_id = seg_id
+                state.current_segment_type = next_type
+                state.transport_started_at = recorded_at
+                await logger.ainfo(
+                    "segment_zone_exit",
+                    device_id=state.device_id,
+                    seg_id=seg_id,
+                    next_type=next_type,
+                )
+            state.zone_entry_id = None
+            state.zone_entry_at = None
+            state.zone_entry_lat = None
+            state.zone_entry_lng = None
+
+        # ── 运输超时检测 ──────────────────────────────────────────────────
+        if (
+            state.current_segment_type in _TRANSPORT_TYPES
+            and state.transport_started_at is not None
+            and transport_timeout_min > 0
+            and (recorded_at - state.transport_started_at).total_seconds() / 60.0
+            >= transport_timeout_min
+        ):
+            await _ts_repo.update_segment_type(conn, state.current_segment_id, "unknown")  # type: ignore[arg-type]
+            state.current_segment_type = "unknown"
+            state.transport_started_at = None
+            await logger.ainfo(
+                "segment_transport_timeout",
+                device_id=state.device_id,
+                seg_id=state.current_segment_id,
+            )
+
+        # ── 停车 / idle 检测 ──────────────────────────────────────────────
         anchor_lat = state.stationary_anchor_lat
         anchor_lng = state.stationary_anchor_lng
 
         if anchor_lat is None or anchor_lng is None:
             state.stationary_anchor_lat = lat
             state.stationary_anchor_lng = lng
-            state.stationary_since = now
+            state.stationary_since = recorded_at
         else:
-            dist = _distance_m(anchor_lat, anchor_lng, lat, lng)
-            if dist > PARK_STATIONARY_RADIUS_M:
+            dist = _haversine_m(anchor_lat, anchor_lng, lat, lng)
+            if dist > IDLE_RADIUS_M:
+                # 车辆移动
+                if state.current_segment_type == "idle":
+                    await _close_segment(state, ended_at=recorded_at, end_lat=lat, end_lng=lng, conn=conn)
+                    seg_id = await _ts_repo.open_segment(
+                        conn,
+                        device_id=state.device_id,
+                        started_at=recorded_at,
+                        start_lat=lat,
+                        start_lng=lng,
+                        vehicle_id=state.vehicle_id,
+                        segment_type="unknown",
+                    )
+                    state.current_segment_id = seg_id
+                    state.current_segment_type = "unknown"
+                    await logger.ainfo("segment_idle_exit", device_id=state.device_id, seg_id=seg_id)
                 state.stationary_anchor_lat = lat
                 state.stationary_anchor_lng = lng
-                state.stationary_since = now
+                state.stationary_since = recorded_at
             else:
-                if state.stationary_since is not None:
-                    parked_min = (now - state.stationary_since).total_seconds() / 60.0
-                    if parked_min >= park_threshold_min:
-                        need_new = True
-                        await logger.adebug(
-                            "segment_split_stationary",
-                            device_id=state.device_id,
-                            parked_min=round(parked_min, 1),
-                            radius_m=round(dist, 1),
-                        )
+                # 仍在停车范围内
+                if (
+                    state.current_segment_type != "idle"
+                    and state.stationary_since is not None
+                    and (recorded_at - state.stationary_since).total_seconds() / 60.0
+                    >= park_threshold_min
+                ):
+                    anchor_since = state.stationary_since
+                    await _close_segment(
+                        state,
+                        ended_at=anchor_since,
+                        end_lat=lat,
+                        end_lng=lng,
+                        conn=conn,
+                    )
+                    seg_id = await _ts_repo.open_segment(
+                        conn,
+                        device_id=state.device_id,
+                        started_at=anchor_since,
+                        start_lat=lat,
+                        start_lng=lng,
+                        vehicle_id=state.vehicle_id,
+                        segment_type="idle",
+                    )
+                    state.current_segment_id = seg_id
+                    state.current_segment_type = "idle"
+                    await logger.ainfo(
+                        "segment_idle_entered",
+                        device_id=state.device_id,
+                        seg_id=seg_id,
+                        since=anchor_since.isoformat(),
+                    )
 
-    # ── 执行分段 ──────────────────────────────────────────────────────────────
-    if need_new:
-        if state.current_segment_id is not None and state.last_point_at is not None:
-            await _ts_repo.close_segment(
-                conn,
-                segment_id=state.current_segment_id,
-                ended_at=state.last_point_at,
-                end_lat=lat,
-                end_lng=lng,
-            )
-            await logger.ainfo(
-                "track_segment_closed",
-                device_id=state.device_id,
-                segment_id=state.current_segment_id,
-            )
-
-        seg_id = await _ts_repo.open_segment(
-            conn,
-            device_id=state.device_id,
-            started_at=now,
-            start_lat=lat,
-            start_lng=lng,
-            vehicle_id=state.vehicle_id,
-            segment_type=None,  # 普通段；类型段由 switch_segment_type 开启
-        )
-        state.current_segment_id = seg_id
-        state.current_segment_type = None
-        await logger.ainfo(
-            "track_segment_opened",
-            device_id=state.device_id,
-            segment_id=seg_id,
-        )
-
-        state.stationary_anchor_lat = lat
-        state.stationary_anchor_lng = lng
-        state.stationary_since = now
-
-    else:
-        await _ts_repo.increment_points(conn, state.current_segment_id)  # type: ignore[arg-type]
-
-    state.last_point_at = now
-    return state.current_segment_id  # type: ignore[return-value]
+    # ── 更新 work_state ───────────────────────────────────────────────────
+    new_ws = _SEG_TO_WORK_STATE.get(state.current_segment_type or "unknown", WorkState.UNKNOWN)
+    if state.current_work_state != new_ws:
+        await _record_work_state_change(state, new_ws, conn)
 
 
-async def switch_segment_type(
+async def _close_segment(
     state: DeviceState,
-    new_type: Optional[str],
+    ended_at: datetime,
+    end_lat: float,
+    end_lng: float,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> None:
+    if state.current_segment_id is not None:
+        await _ts_repo.close_segment(
+            conn,
+            segment_id=state.current_segment_id,
+            ended_at=ended_at,
+            end_lat=end_lat,
+            end_lng=end_lng,
+        )
+        await logger.adebug(
+            "segment_closed",
+            device_id=state.device_id,
+            seg_id=state.current_segment_id,
+            seg_type=state.current_segment_type,
+        )
+
+
+async def _recover_or_open_unknown(
+    state: DeviceState,
     lat: float,
     lng: float,
-    now: datetime,
+    recorded_at: datetime,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
-) -> int:
-    """
-    关闭当前段，立即开启类型为 new_type 的新段。
-    new_type: 'loading' | 'unloading' | None（None=普通行驶段）
-
-    在 work_state_service 作业状态转换时调用；使用 segment_lock 避免并发问题。
-    """
-    async with state.segment_lock:
-        # 关闭当前段
-        if state.current_segment_id is not None and state.last_point_at is not None:
-            await _ts_repo.close_segment(
-                conn,
-                segment_id=state.current_segment_id,
-                ended_at=now,
-                end_lat=lat,
-                end_lng=lng,
-            )
-            await logger.ainfo(
-                "track_segment_closed_for_type_switch",
-                device_id=state.device_id,
-                segment_id=state.current_segment_id,
-                old_type=state.current_segment_type,
-                new_type=new_type,
-            )
-
-        # 开启新段
-        seg_id = await _ts_repo.open_segment(
-            conn,
-            device_id=state.device_id,
-            started_at=now,
-            start_lat=lat,
-            start_lng=lng,
-            vehicle_id=state.vehicle_id,
-            segment_type=new_type,
-        )
-        state.current_segment_id = seg_id
-        state.current_segment_type = new_type
-        state.last_point_at = now
-        # 重置驻留锚点（新段开始位置作为新锚点）
-        state.stationary_anchor_lat = lat
-        state.stationary_anchor_lng = lng
-        state.stationary_since = now
-
+) -> None:
+    """首次包（重启或首连）：尝试恢复 DB 中的开放段，否则新开 unknown 段。"""
+    existing = await _ts_repo.find_open_by_device(conn, state.device_id)
+    if existing and existing.vehicle_id == state.vehicle_id:
+        state.current_segment_id = existing.id
+        state.current_segment_type = existing.segment_type or "unknown"
         await logger.ainfo(
-            "track_segment_type_switched",
+            "segment_recovered",
             device_id=state.device_id,
-            segment_id=seg_id,
-            segment_type=new_type,
+            seg_id=existing.id,
         )
-        return seg_id
+        return
+
+    if existing:
+        # 车辆绑定已变，关闭旧段
+        await _ts_repo.close_segment(
+            conn,
+            segment_id=existing.id,
+            ended_at=recorded_at,
+            end_lat=lat,
+            end_lng=lng,
+        )
+
+    seg_id = await _ts_repo.open_segment(
+        conn,
+        device_id=state.device_id,
+        started_at=recorded_at,
+        start_lat=lat,
+        start_lng=lng,
+        vehicle_id=state.vehicle_id,
+        segment_type="unknown",
+    )
+    state.current_segment_id = seg_id
+    state.current_segment_type = "unknown"
+    state.stationary_anchor_lat = lat
+    state.stationary_anchor_lng = lng
+    state.stationary_since = recorded_at
+    await logger.ainfo(
+        "segment_opened_unknown",
+        device_id=state.device_id,
+        seg_id=seg_id,
+    )
+
+
+async def _record_work_state_change(
+    state: DeviceState,
+    new_ws: WorkState,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> None:
+    """记录 work_session 状态变更。"""
+    from app.db.repos.work_session_repo import WorkSessionRepo
+    _repo = WorkSessionRepo()
+    if state.vehicle_id is None:
+        state.current_work_state = new_ws
+        return
+    open_session = await _repo.find_open_by_vehicle(conn, state.vehicle_id)
+    if open_session:
+        await _repo.close_session(conn, open_session.id)
+    zone_id = state.zone_entry_id if new_ws in (WorkState.LOADING, WorkState.UNLOADING) else None
+    await _repo.open_session(conn, state.vehicle_id, new_ws, zone_id)
+    state.current_work_state = new_ws
+
+
+# ---------------------------------------------------------------------------
+# 兼容旧调用：关闭当前段并立即以新类型开启（work_state_service 曾调用）
+# 已被 process_gps_point 内联，此处保留供其他调用方使用
+# ---------------------------------------------------------------------------
+
+async def close_on_disconnect(
+    state: DeviceState,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> None:
+    """设备断线时关闭开放段。"""
+    async with state.segment_lock:
+        if state.current_segment_id is None:
+            return
+        now = datetime.now(tz=timezone.utc)
+        lat = state.last_point_lat or 0.0
+        lng = state.last_point_lng or 0.0
+        await _ts_repo.close_segment(
+            conn,
+            segment_id=state.current_segment_id,
+            ended_at=now,
+            end_lat=lat,
+            end_lng=lng,
+        )
+        state.current_segment_id = None
+        state.current_segment_type = None

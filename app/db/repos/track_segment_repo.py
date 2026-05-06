@@ -11,6 +11,8 @@ from app.db.queries.track_segment import (
     INCREMENT_SEGMENT_POINTS_SQL,
     INSERT_SEGMENT_SQL,
     SELECT_OPEN_SEGMENT_BY_DEVICE_SQL,
+    UPDATE_SEGMENT_START_SQL,
+    UPDATE_SEGMENT_TYPE_SQL,
 )
 
 
@@ -56,6 +58,24 @@ class TrackSegmentRepo:
             CLOSE_SEGMENT_SQL,
             segment_id, ended_at, end_lat, end_lng, extra_points,
         )
+
+    async def update_segment_type(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        segment_id: int,
+        segment_type: Optional[str],
+    ) -> None:
+        await conn.execute(UPDATE_SEGMENT_TYPE_SQL, segment_id, segment_type)
+
+    async def update_segment_start(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        segment_id: int,
+        started_at: datetime,
+        start_lat: float,
+        start_lng: float,
+    ) -> None:
+        await conn.execute(UPDATE_SEGMENT_START_SQL, segment_id, started_at, start_lat, start_lng)
 
     async def increment_points(
         self, conn: asyncpg.Connection, segment_id: int  # type: ignore[type-arg]

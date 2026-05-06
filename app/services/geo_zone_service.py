@@ -8,6 +8,7 @@ from app.core.enums import ZoneType
 from app.core.exceptions import NotFoundError
 from app.db.repos.geo_zone_repo import GeoZoneRepo, GeoZoneRow
 from app.models.http_geo_zone import GeoZoneCreate, GeoZoneResponse, GeoZoneUpdate
+from app.services.geofence_service import invalidate_zone_cache
 
 _repo = GeoZoneRepo()
 
@@ -58,6 +59,7 @@ class GeoZoneService:
         )
         row = await _repo.find_by_id(conn, new_id)
         assert row is not None
+        invalidate_zone_cache()
         return _to_response(row)
 
     async def update_zone(
@@ -81,9 +83,11 @@ class GeoZoneService:
         )
         updated = await _repo.find_by_id(conn, zone_id)
         assert updated is not None
+        invalidate_zone_cache()
         return _to_response(updated)
 
     async def delete_zone(
         self, conn: asyncpg.Connection, zone_id: int  # type: ignore[type-arg]
     ) -> None:
         await _repo.delete(conn, zone_id)
+        invalidate_zone_cache()

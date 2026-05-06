@@ -7,7 +7,7 @@ import utc from 'dayjs/plugin/utc'
 import { useAmap } from '@/composables/useAmap'
 import type { AMapPolygon } from '@/composables/useAmap'
 import { formatChinaDateTime } from '@/utils/datetime'
-import { tracksApi, type TrackSegment, type TrackPoint } from '@/api/tracks'
+import { tracksApi, type TrackSegment, type TrackPoint, type SegmentType } from '@/api/tracks'
 import { vehiclesApi } from '@/api/vehicles'
 import { geoZonesApi } from '@/api/geoZones'
 import { useAuthStore } from '@/stores/auth'
@@ -51,6 +51,21 @@ const dateRange = ref<[string, string]>([
 
 /** 过滤距离 < 0.1km 的驻留段（车辆停留未熄火）；默认开启 */
 const hideStationary = ref(true)
+/** 显示 idle（停车未关机）段；默认隐藏 */
+const showIdle = ref(false)
+
+/** 所有段类型的中文标签与颜色 */
+const SEGMENT_TYPE_META: Record<
+  NonNullable<SegmentType>,
+  { label: string; type: 'success' | 'warning' | 'primary' | 'info' | 'danger' | '' }
+> = {
+  loading:          { label: '装料',   type: 'success'  },
+  unloading:        { label: '卸料',   type: 'warning'  },
+  transport_loaded: { label: '重载运输', type: 'primary'  },
+  transport_empty:  { label: '空载',   type: 'info'     },
+  unknown:          { label: '未知',   type: ''         },
+  idle:             { label: '停车',   type: ''         },
+}
 
 const selectedId = ref<number | null>(null)
 /** 大量轨迹点不做深度响应式，减轻播放/滑块时的 Vue 开销 */
@@ -243,6 +258,7 @@ async function fetchList() {
       vehicle_id: vehicleFilter.value,
       limit: 200,
       min_distance_km: hideStationary.value ? 0.3 : 0,
+      show_idle: showIdle.value || undefined,
     })
     await loadGeocoder().catch(() => {})
     selectedId.value = null
@@ -288,7 +304,9 @@ async function onRowClick(row: TrackRow, _col: unknown, evt: Event) {
   playing.value = false
   stopPlayTimer()
   try {
-    const raw = await tracksApi.points(row.id, 25000)
+    // 运输段（重载/空载）附带缓冲分钟：在段起止各扩展 buffer_min 分钟以展示完整轨迹
+    const bufMin = row.buffer_min > 0 ? row.buffer_min : undefined
+    const raw = await tracksApi.points(row.id, 25000, bufMin)
     // LBS 基站定位精度差，不参与轨迹回放
     const pts = raw.filter((p) => p.loc_type !== 'lbs')
     points.value = pts
@@ -531,7 +549,8 @@ onUnmounted(() => {
             />
           </el-select>
           <el-button type="primary" :loading="loading" @click="fetchList">查询</el-button>
-          <el-checkbox v-model="hideStationary" label="隐藏驻留段" @change="fetchList" />
+          <el-checkbox v-model="hideStationary" label="隐藏短距段" @change="fetchList" />
+          <el-checkbox v-model="showIdle" label="显示停车记录" @change="fetchList" />
         </div>
 
         <el-table
@@ -558,22 +577,17 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="距离(km)" width="88" align="right">
+          <el-table-column label="距离(km)" width="96" align="right">
             <template #default="{ row }">
               <div class="cell-stack" style="align-items:flex-end">
                 <span>{{ row.distance_km.toFixed(2) }}</span>
                 <el-tag
-                  v-if="row.segment_type === 'loading'"
-                  type="success"
+                  v-if="row.segment_type && SEGMENT_TYPE_META[row.segment_type]"
+                  :type="SEGMENT_TYPE_META[row.segment_type].type"
                   size="small"
                   effect="light"
-                >装料</el-tag>
-                <el-tag
-                  v-else-if="row.segment_type === 'unloading'"
-                  type="warning"
-                  size="small"
-                  effect="light"
-                >卸料</el-tag>
+                  :class="['seg-tag', `seg-tag--${row.segment_type}`]"
+                >{{ SEGMENT_TYPE_META[row.segment_type].label }}</el-tag>
               </div>
             </template>
           </el-table-column>
@@ -749,6 +763,13 @@ onUnmounted(() => {
 .muted {
   color: #8c8c8c;
   font-size: 12px;
+}
+/* idle / unknown 段使用浅灰标签（Element Plus 默认 '' type 是深色，覆盖为灰） */
+.seg-tag--idle,
+.seg-tag--unknown {
+  --el-tag-bg-color: #f5f5f5;
+  --el-tag-border-color: #d9d9d9;
+  --el-tag-text-color: #8c8c8c;
 }
 .cell-stack {
   display: flex;

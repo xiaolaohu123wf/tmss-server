@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Optional
 
 import structlog
@@ -32,6 +33,9 @@ _time_weather_handler = TimeWeatherHandler()
 _full_state_handler = FullStateHandler(device_registry)
 _gps_handler: Optional[GpsHandler] = None
 _geo_zone_repo = GeoZoneRepo()
+_weather_city_cache: str = "Nanjing"
+_weather_city_cached_at: float = 0.0
+_WEATHER_CITY_TTL_S = 60.0
 
 
 def _normalize_module_imei(raw: str) -> str:
@@ -63,8 +67,8 @@ async def _get_gps_handler() -> GpsHandler:
             registry=device_registry,
             global_speed_limit=int(cfg["global_speed_limit"]),
             park_threshold_min=int(cfg["park_threshold_min"]),
-            loading_dwell_min=int(cfg["loading_dwell_min"]),
-            unloading_dwell_min=int(cfg["unloading_dwell_min"]),
+            loading_dwell_s=int(cfg["loading_dwell_s"]),
+            unloading_dwell_s=int(cfg["unloading_dwell_s"]),
             alert_cooldown_s=int(cfg["alert_cooldown_s"]),
             transport_timeout_min=int(cfg["transport_timeout_min"]),
             has_restricted_zones=has_restricted,
@@ -76,10 +80,29 @@ async def _get_gps_handler() -> GpsHandler:
     return _gps_handler
 
 
+async def _get_weather_city() -> str:
+    """读取天气城市（带短 TTL 缓存，避免每次 rw 都查库）。"""
+    global _weather_city_cache, _weather_city_cached_at
+    now = time.monotonic()
+    if (now - _weather_city_cached_at) < _WEATHER_CITY_TTL_S:
+        return _weather_city_cache
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        cfg = await conn.fetchrow(SELECT_BUSINESS_CONFIG_SQL)
+    city = str(cfg["weather_city"]).strip() if cfg and cfg["weather_city"] else "Nanjing"
+    _weather_city_cache = city or "Nanjing"
+    _weather_city_cached_at = now
+    return _weather_city_cache
+
+
 def invalidate_gps_handler() -> None:
     """围栏或业务配置变更后调用，下次 GPS 包时重新加载配置。"""
     global _gps_handler
     _gps_handler = None
+    # 配置变更后让天气城市缓存立刻失效，下一次 rw 生效。
+    global _weather_city_cached_at
+    _weather_city_cached_at = 0.0
 
 
 class ConnectionHandler:
@@ -153,7 +176,8 @@ class ConnectionHandler:
             await _time_weather_handler.handle_time(self._writer)
             return
         if parsed == "rw":
-            await _time_weather_handler.handle_weather(self._writer)
+            city = await _get_weather_city()
+            await _time_weather_handler.handle_weather(self._writer, city=city)
             return
 
         # JSON 对象

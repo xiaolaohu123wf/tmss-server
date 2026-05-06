@@ -11,6 +11,7 @@ from app.cache.session_repo import SessionData
 from app.core.enums import UserRole
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.db.deps import get_db_conn
+from app.db.repos.business_config_repo import BusinessConfigRepo
 from app.db.repos.track_query_repo import TrackQueryRepo
 from app.http.deps import require_fleet_or_above, require_manager
 from app.http.response import ok
@@ -18,6 +19,11 @@ from app.services.geofence_service import get_zones_at, wgs84_to_gcj02
 
 router = APIRouter(prefix="/api/track-segments", tags=["track-segments"])
 _repo = TrackQueryRepo()
+_cfg_repo = BusinessConfigRepo()
+
+# 运输段默认缓冲分钟数（从业务配置读取；此为硬编码回退值）
+_DEFAULT_BUFFER_MIN = 3
+_TRANSPORT_TYPES = frozenset(["transport_loaded", "transport_empty"])
 
 
 def _fleet_filter(session: SessionData) -> Optional[int]:
@@ -71,7 +77,8 @@ class TrackSegmentListItem(BaseModel):
     started_at: str
     ended_at: Optional[str]
     distance_km: float
-    segment_type: Optional[str] = None  # 'loading' | 'unloading' | None
+    segment_type: Optional[str] = None
+    # 'loading'|'unloading'|'transport_loaded'|'transport_empty'|'unknown'|'idle'|None
     start_zone_name: Optional[str]
     end_zone_name: Optional[str]
     cargo_name: Optional[str] = None
@@ -79,6 +86,7 @@ class TrackSegmentListItem(BaseModel):
     start_lng: Optional[float] = None
     end_lat: Optional[float] = None
     end_lng: Optional[float] = None
+    buffer_min: int = 0  # 前端查询 points 时应附带的缓冲分钟数
 
 
 class TrackPointItem(BaseModel):
@@ -109,7 +117,11 @@ async def list_track_segments(
     min_distance_km: float = Query(
         0.3,
         ge=0.0,
-        description="过滤掉行驶距离小于该值（km）的驻留段，传 0 可显示全部",
+        description="过滤掉行驶距离小于该值（km）的 unknown 段；传 0 可显示全部",
+    ),
+    show_idle: bool = Query(
+        False,
+        description="是否显示停车段（idle）；默认隐藏",
     ),
 ) -> dict:
     if to <= from_:
@@ -120,8 +132,11 @@ async def list_track_segments(
     if to.tzinfo is None:
         to = to.replace(tzinfo=timezone.utc)
 
+    # 读取业务配置以获取 segment_buffer_min
+    cfg = await _cfg_repo.get_singleton(conn)
+    seg_buffer_min: int = cfg.segment_buffer_min if cfg else _DEFAULT_BUFFER_MIN
+
     ff = _fleet_filter(session)
-    # 多取一些以补偿过滤掉的驻留段；最多内部查 500 条
     internal_limit = min(limit * 4, 500)
     rows = await _repo.list_segments(
         conn,
@@ -138,10 +153,16 @@ async def list_track_segments(
     for r in rows:
         distance_km = round(dist_map.get(r.id, 0.0), 3)
 
-        # 过滤驻留段：距离过小且已结束的普通段视为原地停留，跳过；
-        # 装/卸料类型段（segment_type 非空）无论距离多短都保留；
-        # 进行中的段（ended_at=None）不过滤，避免漏掉当前正在行驶的段
-        if r.ended_at is not None and r.segment_type is None and distance_km < min_distance_km:
+        # idle 段默认隐藏（用户切换"显示停车记录"时传 show_idle=true）
+        if r.segment_type == "idle" and not show_idle:
+            continue
+
+        # unknown 段按距离过滤（短暂停车/原地驻留噪点）
+        if (
+            r.ended_at is not None
+            and r.segment_type in ("unknown", None)
+            and distance_km < min_distance_km
+        ):
             continue
 
         s_lat, s_lng = r.start_lat, r.start_lng
@@ -161,6 +182,10 @@ async def list_track_segments(
             if e_lat is not None and e_lng is not None
             else (None, None)
         )
+
+        # 运输段附带缓冲分钟数，前端查询 points 时使用
+        buf = seg_buffer_min if r.segment_type in _TRANSPORT_TYPES else 0
+
         item = TrackSegmentListItem(
             id=r.id,
             vehicle_id=r.vehicle_id,
@@ -176,6 +201,7 @@ async def list_track_segments(
             start_lng=map_s_lng,
             end_lat=map_e_lat,
             end_lng=map_e_lng,
+            buffer_min=buf,
         )
         items.append(item.model_dump())
         if len(items) >= limit:
@@ -190,9 +216,15 @@ async def get_segment_points(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
     limit: int = Query(25000, ge=100, le=50000),
+    buffer_min: int = Query(
+        0,
+        ge=0,
+        le=30,
+        description="运料/空载段两端时间缓冲（分钟）；传 3 时前后各扩展 3 分钟轨迹",
+    ),
 ) -> dict:
     await _ensure_segment_access(conn, segment_id, session)
-    pts = await _repo.list_points(conn, segment_id, max_points=limit)
+    pts = await _repo.list_points(conn, segment_id, max_points=limit, buffer_min=buffer_min)
     data = []
     for p in pts:
         mlat, mlng = _to_amap_latlng(p.lat, p.lng, p.loc_type)
@@ -214,8 +246,7 @@ async def delete_track_segment(
     _session: SessionData = Depends(require_manager),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """管理员删除历史轨迹段及所有定位点。"""
-    # 经理可查全部；删除前校验段存在（避免误删）
+    """管理员删除轨迹段记录（v1.2.0：定位点独立存储，段删除不影响原始点）。"""
     row = await conn.fetchrow("SELECT 1 FROM track_segment WHERE id = $1", segment_id)
     if row is None:
         raise NotFoundError("轨迹段不存在")

@@ -65,12 +65,12 @@ class WeatherService:
     async def get_weather_reply(self, city: str, cache_ttl_s: int = 1800) -> str:
         """返回 w{temp}:{code} 格式字符串，优先读缓存。"""
         redis = get_redis()
-        cached = await _CACHE.get(redis)
+        cached = await _CACHE.get(redis, city)
         if cached:
             return f"w{cached}"
 
         data = await _fetch_weather(city)
         if data:
-            await _CACHE.set(redis, data, ttl_s=cache_ttl_s)
+            await _CACHE.set(redis, city, data, ttl_s=cache_ttl_s)
             return f"w{data}"
         return "w0:0"   # 降级：返回晴天/0°C

@@ -7,6 +7,7 @@ class WorkState(str, Enum):
     TRANSPORT_LOADED = "transport_loaded"
     TRANSPORT_EMPTY = "transport_empty"
     UNKNOWN = "unknown"
+    IDLE = "idle"
 
 
 class Command(str, Enum):

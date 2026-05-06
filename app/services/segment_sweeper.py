@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 SWEEP_INTERVAL_S = 300   # 每 5 分钟扫一次
 
 # 查找「最后定位点超时」的开放段（LEFT JOIN LATERAL 兼容零定位点段）
-# 零点段：lp 列全为 NULL，回退到 started_at / start_lat / start_lng
+# v1.2.0：location_point 已无 segment_id，改用 device_id + recorded_at >= started_at
 _STALE_SEGMENTS_SQL = """
     SELECT ts.id,
            COALESCE(lp.lat,         ts.start_lat) AS end_lat,
@@ -33,7 +33,9 @@ _STALE_SEGMENTS_SQL = """
     LEFT JOIN LATERAL (
         SELECT lat, lng, recorded_at
         FROM location_point
-        WHERE segment_id = ts.id
+        WHERE device_id   = ts.device_id
+          AND recorded_at >= ts.started_at
+          AND loc_type = 'gps'
         ORDER BY recorded_at DESC
         LIMIT 1
     ) lp ON true

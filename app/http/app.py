@@ -122,6 +122,10 @@ def create_app() -> FastAPI:
         async def monitor_page() -> FileResponse:
             return FileResponse(os.path.join(_static_dir, "monitor.html"))
 
+        @app.get("/orthophoto-test", include_in_schema=False)
+        async def orthophoto_amap_test_page() -> FileResponse:
+            return FileResponse(os.path.join(_static_dir, "orthophoto_amap_test.html"))
+
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}

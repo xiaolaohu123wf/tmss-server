@@ -76,7 +76,6 @@ class FullStateHandler:
                 LocationRow(
                     device_id=state.device_id,
                     vehicle_id=state.vehicle_id,
-                    segment_id=state.current_segment_id,
                     recorded_at=recorded_at,
                     lat=lat,
                     lng=lng,
