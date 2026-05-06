@@ -52,8 +52,6 @@ async def process_gps_point(
     recorded_at: datetime,
     zones_at_point: list[GeoZoneRow],
     *,
-    loading_dwell_s: int,
-    unloading_dwell_s: int,
     park_threshold_min: int,
     transport_timeout_min: int,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
@@ -78,8 +76,6 @@ async def process_gps_point(
             recorded_at=recorded_at,
             loading_zone=loading_zone,
             unloading_zone=unloading_zone,
-            loading_dwell_s=loading_dwell_s,
-            unloading_dwell_s=unloading_dwell_s,
             park_threshold_min=park_threshold_min,
             transport_timeout_min=transport_timeout_min,
             conn=conn,
@@ -99,8 +95,6 @@ async def _process_locked(
     recorded_at: datetime,
     loading_zone: Optional[GeoZoneRow],
     unloading_zone: Optional[GeoZoneRow],
-    loading_dwell_s: int,
-    unloading_dwell_s: int,
     park_threshold_min: int,
     transport_timeout_min: int,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
@@ -115,7 +109,6 @@ async def _process_locked(
     # ── 围栏区域逻辑 ──────────────────────────────────────────────────────
     if active_zone:
         zone_type = "loading" if loading_zone else "unloading"
-        dwell_threshold = loading_dwell_s if loading_zone else unloading_dwell_s
 
         if state.zone_entry_id != active_zone.id:
             state.zone_entry_id = active_zone.id
@@ -123,11 +116,10 @@ async def _process_locked(
             state.zone_entry_lat = lat
             state.zone_entry_lng = lng
 
-        # 驻留阈值确认
+        # 进入围栏立即确认装/卸料（无驻留等待）
         if (
             state.current_segment_type not in _WORK_ZONE_TYPES
             and state.zone_entry_at is not None
-            and (recorded_at - state.zone_entry_at).total_seconds() >= dwell_threshold
         ):
             entry_at = state.zone_entry_at
             entry_lat = state.zone_entry_lat or lat
@@ -164,34 +156,36 @@ async def _process_locked(
 
     else:
         # 在围栏外
-        if state.zone_entry_id is not None:
-            # 刚离开围栏
-            if state.current_segment_type in _WORK_ZONE_TYPES:
-                prev = state.current_segment_type
-                await _close_segment(state, ended_at=recorded_at, end_lat=lat, end_lng=lng, conn=conn)
-                next_type = "transport_loaded" if prev == "loading" else "transport_empty"
-                seg_id = await _ts_repo.open_segment(
-                    conn,
-                    device_id=state.device_id,
-                    started_at=recorded_at,
-                    start_lat=lat,
-                    start_lng=lng,
-                    vehicle_id=state.vehicle_id,
-                    segment_type=next_type,
-                )
-                state.current_segment_id = seg_id
-                state.current_segment_type = next_type
-                state.transport_started_at = recorded_at
-                await logger.ainfo(
-                    "segment_zone_exit",
-                    device_id=state.device_id,
-                    seg_id=seg_id,
-                    next_type=next_type,
-                )
+        if state.zone_entry_id is not None and state.current_segment_type in _WORK_ZONE_TYPES:
+            # 已确认装/卸料段 → 关闭工作段，开启运输段
+            prev = state.current_segment_type
+            await _close_segment(state, ended_at=recorded_at, end_lat=lat, end_lng=lng, conn=conn)
+            next_type = "transport_loaded" if prev == "loading" else "transport_empty"
+            seg_id = await _ts_repo.open_segment(
+                conn,
+                device_id=state.device_id,
+                started_at=recorded_at,
+                start_lat=lat,
+                start_lng=lng,
+                vehicle_id=state.vehicle_id,
+                segment_type=next_type,
+            )
+            state.current_segment_id = seg_id
+            state.current_segment_type = next_type
+            state.transport_started_at = recorded_at
+            # 确认后清除围栏进入计时
             state.zone_entry_id = None
             state.zone_entry_at = None
             state.zone_entry_lat = None
             state.zone_entry_lng = None
+            await logger.ainfo(
+                "segment_zone_exit",
+                device_id=state.device_id,
+                seg_id=seg_id,
+                next_type=next_type,
+            )
+        # 未确认驻留的短暂离开：保留 zone_entry_ 状态，下次进入同一围栏时计时继续累积，
+        # 防止 GPS 边界抖动导致 zone_entry_at 不断重置而无法触发驻留确认。
 
         # ── 运输超时检测 ──────────────────────────────────────────────────
         if (

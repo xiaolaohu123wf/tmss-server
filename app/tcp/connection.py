@@ -67,8 +67,6 @@ async def _get_gps_handler() -> GpsHandler:
             registry=device_registry,
             global_speed_limit=int(cfg["global_speed_limit"]),
             park_threshold_min=int(cfg["park_threshold_min"]),
-            loading_dwell_s=int(cfg["loading_dwell_s"]),
-            unloading_dwell_s=int(cfg["unloading_dwell_s"]),
             alert_cooldown_s=int(cfg["alert_cooldown_s"]),
             transport_timeout_min=int(cfg["transport_timeout_min"]),
             has_restricted_zones=has_restricted,

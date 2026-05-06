@@ -41,8 +41,10 @@ const markerMap = new Map<number, unknown>()
 const markerWorkState = new Map<number, WorkState>()
 // Track last rendered heading (degrees from north) per vehicle
 const markerHeading = new Map<number, number | null>()
-// Trail: vehicleId → last TRAIL_MAX [lng, lat] points
-const TRAIL_MAX = 10
+// 当前跟踪车辆（点击切换；地图自动居中 + 高亮闪烁）
+const trackedVehicleId = ref<number | null>(null)
+// Trail: vehicleId → last TRAIL_MAX [lng, lat] points（GPS 1s/次，60 点 ≈ 1 分钟）
+const TRAIL_MAX = 60
 const trailPoints = new Map<number, [number, number][]>()
 const trailPolylines = new Map<number, unknown>()
 
@@ -143,8 +145,8 @@ const detailPanelVisible = ref(false)
 
 // Work state → color for truck cab
 const STATE_COLORS: Record<WorkState, string> = {
-  loading: '#fa8c16',
-  unloading: '#52c41a',
+  loading: '#52c41a',
+  unloading: '#fa8c16',
   transport_loaded: '#f5222d',
   transport_empty: '#1890ff',
   unknown: '#8c8c8c',
@@ -185,45 +187,50 @@ function _headingChanged(a: number | null, b: number | null, threshold = 8): boo
  * 布局：车牌绝对定位在图标上方（不参与流式排版），marker anchor='center'
  * 使车身几何中心精确落在 GPS 坐标点。
  */
-function makeTruckContent(pos: VehiclePosition, headingDeg: number | null): string {
+/**
+ * 车辆图标尺寸（宽×0.9，高×1.5，viewBox 保持原始比例，SVG 拉伸显示）
+ *   原始 24×34 → 显示 22×51
+ *   图例缩略 11×26（约 0.5×）
+ */
+const TRUCK_W = 22
+const TRUCK_H = 51
+
+function makeTruckContent(
+  pos: VehiclePosition,
+  headingDeg: number | null,
+  isTracked: boolean,
+): string {
   const color = STATE_COLORS[pos.work_state] ?? '#8c8c8c'
   const plate = pos.license_plate ?? `D${pos.device_id}`
   const rot = headingDeg !== null ? `transform:rotate(${headingDeg.toFixed(1)}deg);` : ''
+  // 跟踪状态：黄色脉冲光晕（CSS class truck-tracked，keyframe 由 onMounted 注入）
+  const trackedClass = isTracked ? 'truck-tracked' : ''
 
-  // 俯视卡车：车头（前风挡）在上（北），车尾在下，viewBox 24×34
-  // 结构：车身矩形 + 前鼻尖 + 前风挡 + 四个车轮 + 厢货分隔线
+  // 俯视卡车：viewBox 0 0 24 34（原始路径不变），渲染尺寸 22×51（宽压窄×0.9，长拉长×1.5）
   const svg = [
-    `<svg width="24" height="34" viewBox="0 0 24 34" fill="none" xmlns="http://www.w3.org/2000/svg">`,
-    // 车身主体
+    `<svg width="${TRUCK_W}" height="${TRUCK_H}" viewBox="0 0 24 34" fill="none" xmlns="http://www.w3.org/2000/svg">`,
     `<rect x="3" y="4" width="18" height="28" rx="3" fill="${color}"/>`,
-    // 前鼻尖（三角，指向北）
     `<path d="M 3 8 L 12 0 L 21 8 Z" fill="${color}"/>`,
-    // 前风挡玻璃（浅蓝半透明）
     `<rect x="5" y="4" width="14" height="9" rx="1.5" fill="rgba(190,230,255,0.80)"/>`,
-    // 驾驶室与货厢分隔线
     `<line x1="5" y1="15" x2="19" y2="15" stroke="rgba(0,0,0,0.18)" stroke-width="1.2"/>`,
-    // 前轮（左 + 右）
     `<rect x="0" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
     `<rect x="20" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
-    // 后轮（左 + 右）
     `<rect x="0" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
     `<rect x="20" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
     `</svg>`,
   ].join('')
 
-  // 外层容器：position:relative，尺寸 = SVG 尺寸（24×34），用于 anchor:'center'
-  // 车牌绝对定位在容器上方，不影响锚点计算
   return [
-    `<div style="position:relative;width:24px;height:34px;cursor:pointer;`,
+    `<div class="${trackedClass}" style="position:relative;width:${TRUCK_W}px;height:${TRUCK_H}px;cursor:pointer;`,
     `filter:drop-shadow(0 2px 5px rgba(0,0,0,.40))">`,
-    // 车牌浮动在图标正上方
+    // 车牌标注
     `<div style="position:absolute;bottom:calc(100% + 4px);left:50%;`,
     `transform:translateX(-50%);`,
     `background:rgba(15,15,15,.80);color:#fff;font-size:11px;font-weight:700;`,
     `padding:1px 7px;border-radius:3px;white-space:nowrap;letter-spacing:.5px;`,
     `pointer-events:none">${plate}</div>`,
-    // 俯视卡车（旋转）
-    `<div style="${rot}width:24px;height:34px;transform-origin:center center">`,
+    // 俯视卡车（旋转，绕中心）
+    `<div style="${rot}width:${TRUCK_W}px;height:${TRUCK_H}px;transform-origin:center center">`,
     svg,
     `</div>`,
     `</div>`,
@@ -252,8 +259,8 @@ function _flushUpdates() {
       const pl = new window.AMap.Polyline({
         path: trail,
         strokeColor: '#1890ff',
-        strokeOpacity: 0.55,
-        strokeWeight: 4,
+        strokeOpacity: 0.45,
+        strokeWeight: 3,
         strokeStyle: 'solid',
         lineJoin: 'round',
         lineCap: 'round',
@@ -264,6 +271,7 @@ function _flushUpdates() {
 
     // ── 方向计算 ──
     const heading = _computeHeading(trail)
+    const isTracked = trackedVehicleId.value === key
 
     // ── Marker ──
     const marker = markerMap.get(key) as {
@@ -273,23 +281,34 @@ function _flushUpdates() {
 
     if (marker) {
       marker.setPosition(lngLat)
-      // setContent() 昂贵（重建 DOM），只在作业状态或行驶方向变化时才调用
+      // setContent() 昂贵（重建 DOM），只在状态/方向/跟踪状态变化时调用
       const stateChanged = markerWorkState.get(key) !== pos.work_state
       const hdgChanged = _headingChanged(markerHeading.get(key) ?? null, heading)
       if (stateChanged || hdgChanged) {
-        marker.setContent(makeTruckContent(pos, heading))
+        marker.setContent(makeTruckContent(pos, heading, isTracked))
         markerWorkState.set(key, pos.work_state)
         markerHeading.set(key, heading)
+      }
+      // 跟踪中：地图自动跟随
+      if (isTracked && map.value) {
+        ;(map.value as { setCenter(c: [number, number]): void }).setCenter(lngLat)
       }
     } else {
       const m = new window.AMap.Marker({
         position: lngLat,
-        content: makeTruckContent(pos, heading),
+        content: makeTruckContent(pos, heading, isTracked),
         anchor: 'center',
         map: map.value,
       })
+      const clickKey = key
       ;(m as { on(e: string, fn: () => void): void }).on('click', () => {
-        selectedVehicle.value = pos
+        // 点击同一辆车取消跟踪，点击不同车辆切换跟踪
+        trackedVehicleId.value = trackedVehicleId.value === clickKey ? null : clickKey
+        // 同步更新详情面板
+        selectedVehicle.value =
+          dashboardStore.positionList.find(
+            (p) => (p.vehicle_id ?? p.device_id) === clickKey,
+          ) ?? pos
         detailPanelVisible.value = true
       })
       markerMap.set(key, m)
@@ -309,6 +328,22 @@ function updateOrCreateMarker(pos: VehiclePosition) {
     requestAnimationFrame(_flushUpdates)
   }
 }
+
+// 跟踪状态切换：立即刷新新旧车辆的图标内容（加/摘闪烁环）
+watch(trackedVehicleId, (newId, oldId) => {
+  for (const [id, tracked] of [[oldId, false], [newId, true]] as [number | null, boolean][]) {
+    if (id == null) continue
+    const p = dashboardStore.positionList.find((x) => (x.vehicle_id ?? x.device_id) === id)
+    if (!p) continue
+    const m = markerMap.get(id) as { setContent(c: string): void } | undefined
+    if (!m) continue
+    m.setContent(makeTruckContent(p, markerHeading.get(id) ?? null, tracked))
+    // 开始跟踪时立即居中
+    if (tracked && map.value) {
+      ;(map.value as { setCenter(c: [number, number]): void }).setCenter([p.lng, p.lat])
+    }
+  }
+})
 
 // Handle incoming location frames
 watch(locationFrame, (frame) => {
@@ -345,6 +380,19 @@ const stateStats = computed(() => {
 })
 
 onMounted(async () => {
+  // 注入车辆跟踪高亮闪烁 CSS（只注入一次）
+  if (!document.getElementById('tmss-truck-anim')) {
+    const style = document.createElement('style')
+    style.id = 'tmss-truck-anim'
+    style.textContent = `
+      @keyframes truck-blink {
+        0%,100% { filter: drop-shadow(0 0 7px rgba(250,219,20,1)) drop-shadow(0 2px 5px rgba(0,0,0,.55)); }
+        50%      { filter: drop-shadow(0 0 1px rgba(250,219,20,.15)) drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+      }
+      .truck-tracked { animation: truck-blink 0.85s ease-in-out infinite; }
+    `
+    document.head.appendChild(style)
+  }
   await nextTick()
   // 从后端读取地图默认中心点，成功则覆盖初始值
   try {
@@ -364,6 +412,7 @@ onUnmounted(() => {
   trailPoints.clear()
   trailPolylines.clear()
   markerMap.clear()
+  trackedVehicleId.value = null
 })
 </script>
 
@@ -388,11 +437,11 @@ onUnmounted(() => {
       </div>
       <div class="stat-divider" />
       <div class="stat-item">
-        <span class="stat-value" style="color:#fa8c16">{{ stateStats.loading }}</span>
+        <span class="stat-value" style="color:#52c41a">{{ stateStats.loading }}</span>
         <span class="stat-label">装料</span>
       </div>
       <div class="stat-item">
-        <span class="stat-value" style="color:#52c41a">{{ stateStats.unloading }}</span>
+        <span class="stat-value" style="color:#fa8c16">{{ stateStats.unloading }}</span>
         <span class="stat-label">卸料</span>
       </div>
       <div class="stat-item">
@@ -452,8 +501,8 @@ onUnmounted(() => {
             :key="state"
             class="legend-item"
           >
-            <!-- 图例：缩略俯视卡车 (12×17 px) -->
-            <svg width="12" height="17" viewBox="0 0 24 34" fill="none" aria-hidden="true">
+            <!-- 图例：缩略俯视卡车（11×26 px，与主图标 22×51 同比 0.5×）-->
+            <svg width="11" height="26" viewBox="0 0 24 34" fill="none" aria-hidden="true">
               <rect x="3" y="4" width="18" height="28" rx="3" :fill="color"/>
               <path d="M 3 8 L 12 0 L 21 8 Z" :fill="color"/>
               <rect x="5" y="4" width="14" height="9" rx="1.5" fill="rgba(190,230,255,0.80)"/>

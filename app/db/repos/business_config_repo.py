@@ -11,15 +11,13 @@ UPDATE_BUSINESS_CONFIG_SQL = """
     UPDATE business_config SET
         global_speed_limit  = $1,
         park_threshold_min  = $2,
-        loading_dwell_s     = $3,
-        unloading_dwell_s   = $4,
-        alert_cooldown_s    = $5,
-        hb_timeout_s        = $6,
-        weather_city        = $7,
-        map_center_lng      = $8,
-        map_center_lat      = $9,
-        transport_timeout_min = $10,
-        segment_buffer_min  = $11
+        alert_cooldown_s    = $3,
+        hb_timeout_s        = $4,
+        weather_city        = $5,
+        map_center_lng      = $6,
+        map_center_lat      = $7,
+        transport_timeout_min = $8,
+        segment_buffer_min  = $9
     WHERE id = 1
 """
 
@@ -28,8 +26,6 @@ UPDATE_BUSINESS_CONFIG_SQL = """
 class BusinessConfigRow:
     global_speed_limit: int
     park_threshold_min: int
-    loading_dwell_s: int
-    unloading_dwell_s: int
     alert_cooldown_s: int
     hb_timeout_s: int
     weather_city: str
@@ -43,8 +39,6 @@ def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[na
     return BusinessConfigRow(
         global_speed_limit=int(r["global_speed_limit"]),
         park_threshold_min=int(r["park_threshold_min"]),
-        loading_dwell_s=int(r["loading_dwell_s"]),
-        unloading_dwell_s=int(r["unloading_dwell_s"]),
         alert_cooldown_s=int(r["alert_cooldown_s"]),
         hb_timeout_s=int(r["hb_timeout_s"]),
         weather_city=str(r["weather_city"]),
@@ -70,8 +64,6 @@ class BusinessConfigRepo:
         *,
         global_speed_limit: int,
         park_threshold_min: int,
-        loading_dwell_s: int,
-        unloading_dwell_s: int,
         alert_cooldown_s: int,
         hb_timeout_s: int,
         weather_city: str,
@@ -84,8 +76,6 @@ class BusinessConfigRepo:
             UPDATE_BUSINESS_CONFIG_SQL,
             global_speed_limit,
             park_threshold_min,
-            loading_dwell_s,
-            unloading_dwell_s,
             alert_cooldown_s,
             hb_timeout_s,
             weather_city.strip() or "Nanjing",

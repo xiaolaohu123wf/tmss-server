@@ -156,7 +156,13 @@ def bounds_amap_lnglat(ds3857: gdal.Dataset) -> tuple[list[float], list[float]]:
     return sw, ne
 
 
-def write_meta(path: Path, ds3857: gdal.Dataset, zoom: str, tile_url_suffix: str) -> None:
+def write_meta(
+    path: Path,
+    ds3857: gdal.Dataset,
+    zoom: str,
+    tile_url_suffix: str,
+    tile_format: str = "png",
+) -> None:
     sw, ne = bounds_amap_lnglat(ds3857)
     gt = ds3857.GetGeoTransform()
     res_x = abs(gt[1])
@@ -165,6 +171,7 @@ def write_meta(path: Path, ds3857: gdal.Dataset, zoom: str, tile_url_suffix: str
     center = [(sw[0] + ne[0]) / 2.0, (sw[1] + ne[1]) / 2.0]
     meta = {
         "tileUrlSuffix": tile_url_suffix,
+        "tileFormat": tile_format,
         "zoom": zoom,
         "center_gcj_lnglat": center,
         "bounds_gcj_lnglat": {"southwest": sw, "northeast": ne},
@@ -183,6 +190,7 @@ def main() -> None:
     ap.add_argument("--meta-out", type=Path, help="Write orthophoto_amap_meta.json for test page")
     ap.add_argument("--zoom-for-meta", default="14-19", help="Zoom range string embedded in meta")
     ap.add_argument("--tile-url-suffix", default="/static/map/tiles_dom", help="Tile base URL path")
+    ap.add_argument("--tile-format", default="png", choices=["png", "jpg"], help="Tile image format written into meta")
     args = ap.parse_args()
 
     src = gdal.Open(str(args.src))
@@ -208,9 +216,9 @@ def main() -> None:
         dstSRS="EPSG:3857",
         format="GTiff",
         creationOptions=[
-            "COMPRESS=JPEG",
-            "JPEG_QUALITY=85",
-            "PHOTOMETRIC=RGB",
+            "COMPRESS=DEFLATE",
+            "PREDICTOR=2",
+            "ZLEVEL=6",
             "TILED=YES",
             "BLOCKXSIZE=512",
             "BLOCKYSIZE=512",
@@ -220,6 +228,7 @@ def main() -> None:
         resampleAlg=gdal.GRA_Bilinear,
         polynomialOrder=3,
         multithread=True,
+        dstAlpha=True,  # add alpha band so nodata areas become transparent in PNG tiles
     )
 
     dst_path = str(args.dst)
@@ -235,7 +244,7 @@ def main() -> None:
         raise SystemExit("Warp produced no dataset")
 
     if args.meta_out:
-        write_meta(args.meta_out, out_ds, args.zoom_for_meta, args.tile_url_suffix)
+        write_meta(args.meta_out, out_ds, args.zoom_for_meta, args.tile_url_suffix, args.tile_format)
 
     print(f"[warp_dom_gcj3857] OK → {args.dst}")
 

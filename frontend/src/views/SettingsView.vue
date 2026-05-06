@@ -10,8 +10,6 @@ interface BusinessConfig {
   park_threshold_min: number
   alert_cooldown_s: number
   hb_timeout_s: number
-  loading_min_stay_s: number
-  unloading_min_stay_s: number
   weather_city: string
   map_center_lng: number
   map_center_lat: number
@@ -23,8 +21,6 @@ const config = ref<BusinessConfig>({
   park_threshold_min: 10,
   alert_cooldown_s: 10,
   hb_timeout_s: 90,
-  loading_min_stay_s: 300,
-  unloading_min_stay_s: 180,
   weather_city: 'Beijing',
   map_center_lng: 109.4753,
   map_center_lat: 30.2832,
@@ -183,50 +179,12 @@ onMounted(loadConfig)
             <el-text type="info" size="small" style="margin-left:8px">按优先级从高到低触发</el-text>
           </template>
 
-          <!-- 优先级 1：围栏识别 -->
+          <!-- 优先级 1：停车时间 -->
           <div class="priority-block">
             <div class="priority-header">
-              <el-tag type="danger" effect="dark" size="small">优先级 ①</el-tag>
-              <span class="priority-title">装 / 卸料围栏识别</span>
-            </div>
-            <p class="priority-desc">
-              车辆进入取土/弃土电子围栏，且在围栏内持续停留时长 ≥ 下方阈值，
-              该段轨迹标记为<b>装料</b>或<b>卸料</b>。
-              满足此条件时，后续两级阈值对该段<b>不再生效</b>。
-            </p>
-            <el-form label-width="140px" :model="config">
-              <el-form-item label="取土区最短停留 (秒)">
-                <el-input-number
-                  v-model="config.loading_min_stay_s"
-                  :min="0"
-                  :max="3600"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item label="弃土区最短停留 (秒)">
-                <el-input-number
-                  v-model="config.unloading_min_stay_s"
-                  :min="0"
-                  :max="3600"
-                  style="width: 100%"
-                />
-              </el-form-item>
-            </el-form>
-          </div>
-
-          <el-divider style="margin:12px 0" />
-
-          <!-- 优先级 2：停车时间 -->
-          <div class="priority-block">
-            <div class="priority-header">
-              <el-tag type="warning" effect="dark" size="small">优先级 ②</el-tag>
+              <el-tag type="warning" effect="dark" size="small">优先级 ①</el-tag>
               <span class="priority-title">停车时间分段</span>
             </div>
-            <p class="priority-desc">
-              相邻两个 GPS 点时间间隔 ≥ 阈值，则在此处切断轨迹段。
-              若切断产生的段<b>不在</b>围栏内，归类为普通驻留段。
-              运输超时阈值则限定离开装/卸料区后最长的运输时限。
-            </p>
             <el-form label-width="140px" :model="config">
               <el-form-item label="停车分段阈值 (分钟)">
                 <el-input-number
@@ -252,17 +210,12 @@ onMounted(loadConfig)
 
           <el-divider style="margin:12px 0" />
 
-          <!-- 优先级 3：距离兜底 -->
+          <!-- 优先级 2：距离兜底 -->
           <div class="priority-block">
             <div class="priority-header">
-              <el-tag type="info" effect="dark" size="small">优先级 ③</el-tag>
+              <el-tag type="info" effect="dark" size="small">优先级 ②</el-tag>
               <span class="priority-title">距离过滤（前端兜底）</span>
             </div>
-            <p class="priority-desc">
-              轨迹查询页"隐藏驻留段"开关：累计行驶距离 &lt; 0.3 km 的普通段默认隐藏，
-              表示车辆原地停留未熄火。
-              <b>已标记装/卸料的段不受此过滤影响，始终显示。</b>
-            </p>
           </div>
 
           <el-divider style="margin:12px 0" />

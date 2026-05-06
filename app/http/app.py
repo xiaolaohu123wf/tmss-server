@@ -4,11 +4,14 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 import os
+import struct
+import zlib
 
 import structlog
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cache.pool import close_redis_pool, init_redis
 from app.config import settings
@@ -16,6 +19,26 @@ from app.db.pool import close_pool, get_pool
 from app.http.error_handler import register_error_handlers
 
 logger = structlog.get_logger()
+
+
+def _make_transparent_png() -> bytes:
+    """Generate a minimal 1×1 fully-transparent RGBA PNG at import time."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)  # 1×1 RGBA
+    idat_data = zlib.compress(b"\x00\x00\x00\x00\x00")  # filter=None + RGBA(0,0,0,0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr_data)
+        + _chunk(b"IDAT", idat_data)
+        + _chunk(b"IEND", b"")
+    )
+
+
+_TRANSPARENT_PNG: bytes = _make_transparent_png()
 
 
 @asynccontextmanager
@@ -125,6 +148,21 @@ def create_app() -> FastAPI:
         @app.get("/orthophoto-test", include_in_schema=False)
         async def orthophoto_amap_test_page() -> FileResponse:
             return FileResponse(os.path.join(_static_dir, "orthophoto_amap_test.html"))
+
+        @app.exception_handler(StarletteHTTPException)
+        async def _tile_404_handler(request: Request, exc: StarletteHTTPException) -> Response:
+            """Return a transparent PNG instead of 404 for missing DOM tiles.
+            Prevents AMap TileLayer from flooding the console with 404 errors
+            for tiles outside the orthophoto coverage area."""
+            path = request.url.path
+            if (
+                exc.status_code == 404
+                and "/tiles_dom/" in path
+                and (path.endswith(".png") or path.endswith(".jpg"))
+            ):
+                return Response(content=_TRANSPARENT_PNG, media_type="image/png")
+            from fastapi.exception_handlers import http_exception_handler
+            return await http_exception_handler(request, exc)
 
     @app.get("/health")
     async def health() -> dict:

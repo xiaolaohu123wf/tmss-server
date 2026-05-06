@@ -23,7 +23,7 @@
       position: absolute; z-index: 500; left: 12px; top: 12px;
       background: rgba(255,255,255,.92); padding: 10px 14px; border-radius: 8px;
       font: 13px/1.6 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,.15);
-      max-width: min(320px, calc(100vw - 24px));
+      max-width: min(340px, calc(100vw - 24px));
     }
     #bar h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
     .divider { border: none; border-top: 1px solid #e2e8f0; margin: 6px 0; }
@@ -34,6 +34,13 @@
     #bar .row-opacity input[type="range"] { width: 100px; }
     #err { color: #b91c1c; margin-top: 8px; font-size: 12px; white-space: pre-wrap; }
     #hint { color: #475569; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    #coord-panel {
+      position: absolute; z-index: 500; right: 12px; bottom: 40px;
+      background: rgba(0,0,0,.78); color: #e2e8f0; padding: 8px 12px;
+      border-radius: 8px; font: 12px/1.6 monospace; pointer-events: none;
+      min-width: 260px;
+    }
+    #coord-panel b { color: #7dd3fc; }
   </style>
 </head>
 <body>
@@ -64,15 +71,71 @@
       黑色底（隐藏卫星时可见）
     </label>
 
+    <hr class="divider" />
+    <div class="section-label">诊断</div>
+    <label>
+      <input type="checkbox" id="ck-bounds" checked />
+      GCJ02 边界框（红框）
+    </label>
+    <label>
+      <input type="checkbox" id="ck-center" checked />
+      中心标记（蓝点）
+    </label>
+
     <div id="err"></div>
     <div id="hint">若正射层空白：先运行 <code>scripts/tile_dom_gcj_amap.sh</code>。</div>
   </div>
   <div id="map"></div>
+  <div id="coord-panel">点击地图查看坐标</div>
   <script>
     const errEl = document.getElementById('err')
+    const coordPanel = document.getElementById('coord-panel')
 
-    function tileUrl(z, x, y, suffix) {
-      return suffix + '/' + z + '/' + x + '/' + y + '.jpg'
+    function tileUrl(z, x, y, suffix, fmt) {
+      return suffix + '/' + z + '/' + x + '/' + y + '.' + fmt
+    }
+
+    // ── GCJ-02 ↔ WGS-84 helpers (client-side, for diagnostics only) ──────────
+    function _outOfChina(lng, lat) {
+      return !(73.66 < lng && lng < 135.05 && 3.86 < lat && lat < 53.55)
+    }
+    function _transformLat(x, y) {
+      let r = -100 + 2*x + 3*y + 0.2*y*y + 0.1*x*y + 0.2*Math.sqrt(Math.abs(x))
+      r += (20*Math.sin(6*x*Math.PI) + 20*Math.sin(2*x*Math.PI)) * 2/3
+      r += (20*Math.sin(y*Math.PI) + 40*Math.sin(y/3*Math.PI)) * 2/3
+      r += (160*Math.sin(y/12*Math.PI) + 320*Math.sin(y*Math.PI/30)) * 2/3
+      return r
+    }
+    function _transformLng(x, y) {
+      let r = 300 + x + 2*y + 0.1*x*x + 0.1*x*y + 0.1*Math.sqrt(Math.abs(x))
+      r += (20*Math.sin(6*x*Math.PI) + 20*Math.sin(2*x*Math.PI)) * 2/3
+      r += (20*Math.sin(x*Math.PI) + 40*Math.sin(x/3*Math.PI)) * 2/3
+      r += (150*Math.sin(x/12*Math.PI) + 300*Math.sin(x/30*Math.PI)) * 2/3
+      return r
+    }
+    function wgs84ToGcj02(lng, lat) {
+      if (_outOfChina(lng, lat)) return [lng, lat]
+      const a = 6378245.0, ee = 0.00669342162296594323
+      let dlat = _transformLat(lng - 105, lat - 35)
+      let dlng = _transformLng(lng - 105, lat - 35)
+      const radlat = lat / 180 * Math.PI
+      let magic = Math.sin(radlat)
+      magic = 1 - ee * magic * magic
+      const sq = Math.sqrt(magic)
+      dlat = dlat * 180 / (a * (1 - ee) / (magic * sq) * Math.PI)
+      dlng = dlng * 180 / (a / sq * Math.cos(radlat) * Math.PI)
+      return [lng + dlng, lat + dlat]
+    }
+    // Iterative inverse (5 iterations is sufficient for ~cm accuracy)
+    function gcj02ToWgs84(lng, lat) {
+      if (_outOfChina(lng, lat)) return [lng, lat]
+      let wLng = lng, wLat = lat
+      for (let i = 0; i < 5; i++) {
+        const [gLng, gLat] = wgs84ToGcj02(wLng, wLat)
+        wLng -= gLng - lng
+        wLat -= gLat - lat
+      }
+      return [wLng, wLat]
     }
 
     fetch('/static/map/orthophoto_amap_meta.json', { cache: 'no-store' })
@@ -82,6 +145,7 @@
       })
       .then((meta) => {
         const suffix = meta.tileUrlSuffix || '/static/map/tiles_dom'
+        const fmt = meta.tileFormat || 'png'
         const [lng, lat] = meta.center_gcj_lnglat || [109.4753, 30.2832]
         const sw = meta.bounds_gcj_lnglat.southwest
         const ne = meta.bounds_gcj_lnglat.northeast
@@ -108,7 +172,7 @@
           zIndex: 6,
           opacity: 0.95,
           getTileUrl: function (x, y, z) {
-            return tileUrl(z, x, y, suffix)
+            return tileUrl(z, x, y, suffix, fmt)
           },
         })
         map.add(domLayer)
@@ -146,6 +210,43 @@
         } catch (e) {
           console.warn(e)
         }
+
+        // ── 诊断：GCJ02 边界框（红色多边形）────────────────────
+        const boundsRect = new AMap.Polygon({
+          path: [sw, [ne[0], sw[1]], ne, [sw[0], ne[1]]],
+          strokeColor: '#ef4444', strokeWeight: 2, strokeOpacity: 0.9,
+          fillOpacity: 0, zIndex: 20,
+        })
+        map.add(boundsRect)
+
+        // ── 诊断：GCJ02 中心标记（蓝色圆点）────────────────────
+        const centerMarker = new AMap.CircleMarker({
+          center: [lng, lat],
+          radius: 6,
+          fillColor: '#3b82f6', fillOpacity: 1,
+          strokeColor: '#fff', strokeWeight: 2,
+          zIndex: 21,
+        })
+        map.add(centerMarker)
+
+        // ── 诊断：开关 ──────────────────────────────────────────
+        document.getElementById('ck-bounds').addEventListener('change', (e) => {
+          boundsRect[e.target.checked ? 'show' : 'hide']()
+        })
+        document.getElementById('ck-center').addEventListener('change', (e) => {
+          centerMarker[e.target.checked ? 'show' : 'hide']()
+        })
+
+        // ── 诊断：点击坐标（GCJ02 + 近似 WGS84）────────────────
+        map.on('click', (ev) => {
+          const gcjLng = ev.lnglat.getLng().toFixed(6)
+          const gcjLat = ev.lnglat.getLat().toFixed(6)
+          const [wgsLng, wgsLat] = gcj02ToWgs84(Number(gcjLng), Number(gcjLat))
+          coordPanel.innerHTML =
+            `<b>GCJ-02</b>  ${gcjLng}, ${gcjLat}<br>` +
+            `<b>WGS-84</b>  ${wgsLng.toFixed(6)}, ${wgsLat.toFixed(6)}<br>` +
+            `<span style="color:#94a3b8;font-size:11px">偏移≈ Δlng ${(Number(gcjLng)-wgsLng).toFixed(4)}° Δlat ${(Number(gcjLat)-wgsLat).toFixed(4)}°</span>`
+        })
       })
       .catch((e) => {
         errEl.textContent = String(e.message || e)

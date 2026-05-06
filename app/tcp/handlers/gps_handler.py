@@ -37,8 +37,6 @@ _event_repo = EventRepo()
 
 _DEFAULT_SPEED_LIMIT = 80
 _DEFAULT_PARK_MIN = 10
-_DEFAULT_LOADING_S = 300
-_DEFAULT_UNLOADING_S = 300
 _DEFAULT_COOLDOWN_S = 10
 _DEFAULT_TRANSPORT_TIMEOUT_MIN = 30
 
@@ -49,8 +47,6 @@ class GpsHandler:
         registry: DeviceRegistry,
         global_speed_limit: int = _DEFAULT_SPEED_LIMIT,
         park_threshold_min: int = _DEFAULT_PARK_MIN,
-        loading_dwell_s: int = _DEFAULT_LOADING_S,
-        unloading_dwell_s: int = _DEFAULT_UNLOADING_S,
         alert_cooldown_s: int = _DEFAULT_COOLDOWN_S,
         transport_timeout_min: int = _DEFAULT_TRANSPORT_TIMEOUT_MIN,
         has_restricted_zones: bool = False,
@@ -58,8 +54,6 @@ class GpsHandler:
         self._registry = registry
         self._speed_limit = global_speed_limit
         self._park_min = park_threshold_min
-        self._loading_s = loading_dwell_s
-        self._unloading_s = unloading_dwell_s
         self._cooldown_s = alert_cooldown_s
         self._transport_timeout_min = transport_timeout_min
         self._has_restricted = has_restricted_zones
@@ -104,8 +98,6 @@ class GpsHandler:
             lng=packet.lng,
             recorded_at=recorded_at,
             zones_at_point=zones,
-            loading_dwell_s=self._loading_s,
-            unloading_dwell_s=self._unloading_s,
             park_threshold_min=self._park_min,
             transport_timeout_min=self._transport_timeout_min,
             conn=conn,

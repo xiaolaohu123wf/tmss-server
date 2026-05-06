@@ -28,14 +28,12 @@ _business_config_repo = BusinessConfigRepo()
 
 
 class BusinessConfigPayload(BaseModel):
-    """与前端 Settings 表单一致；dwell 字段单位为秒（v1.2.0 起）。"""
+    """与前端 Settings 表单一致（v1.2.2 起移除 dwell 字段）。"""
 
     global_speed_limit: int = Field(ge=10, le=200)
     park_threshold_min: int = Field(ge=1, le=60)
     alert_cooldown_s: int = Field(ge=1, le=300)
     hb_timeout_s: int = Field(ge=30, le=600)
-    loading_min_stay_s: int = Field(ge=0, le=3600)
-    unloading_min_stay_s: int = Field(ge=0, le=3600)
     weather_city: str = Field(min_length=1, max_length=50)
     map_center_lng: float = Field(ge=-180, le=180)
     map_center_lat: float = Field(ge=-90, le=90)
@@ -46,8 +44,6 @@ class BusinessConfigPayload(BaseModel):
         return {
             "global_speed_limit": self.global_speed_limit,
             "park_threshold_min": self.park_threshold_min,
-            "loading_dwell_s": self.loading_min_stay_s,
-            "unloading_dwell_s": self.unloading_min_stay_s,
             "alert_cooldown_s": self.alert_cooldown_s,
             "hb_timeout_s": self.hb_timeout_s,
             "weather_city": self.weather_city,
@@ -71,8 +67,6 @@ def _payload_from_row(row: BusinessConfigRow) -> BusinessConfigPayload:
         park_threshold_min=row.park_threshold_min,
         alert_cooldown_s=row.alert_cooldown_s,
         hb_timeout_s=row.hb_timeout_s,
-        loading_min_stay_s=row.loading_dwell_s,
-        unloading_min_stay_s=row.unloading_dwell_s,
         weather_city=row.weather_city,
         map_center_lng=row.map_center_lng,
         map_center_lat=row.map_center_lat,
@@ -285,19 +279,13 @@ async def reanalyze_segments(
 ) -> dict:
     """
     轻量版：仅对已有轨迹段进行装/卸料类型标注（不重建段）。
-    仅当起点在围栏内 **且** 持续时长 >= 对应区域的最低停留阈值时才打标签，
-    避免将短暂路过或原地驻留（<300 s）误判为装/卸料。
+    起点在装/卸料围栏内即直接打标，无驻留时长限制（v1.2.2 起）。
     """
-    import math as _math
     from app.core.enums import ZoneType
     from app.services.geofence_service import _load_zones, invalidate_zone_cache, point_in_polygon, wgs84_to_gcj02
 
     # 强制刷新围栏缓存，确保使用最新的围栏坐标
     invalidate_zone_cache()
-
-    cfg = await _business_config_repo.get_singleton(conn)
-    loading_dwell_s = cfg.loading_dwell_s if cfg else 300
-    unloading_dwell_s = cfg.unloading_dwell_s if cfg else 300
 
     zones = await _load_zones(conn)
     loading_zones = [z for z in zones if z.zone_type == ZoneType.LOADING]
@@ -309,7 +297,7 @@ async def reanalyze_segments(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     rows = await conn.fetch(
         """
-        SELECT id, start_lat, start_lng, started_at, ended_at
+        SELECT id, start_lat, start_lng
         FROM track_segment
         WHERE started_at >= $1
           AND ended_at IS NOT NULL
@@ -322,20 +310,17 @@ async def reanalyze_segments(
 
     labeled = 0
     for row in rows:
-        duration_s = (row["ended_at"] - row["started_at"]).total_seconds()
         lat_gcj, lng_gcj = wgs84_to_gcj02(float(row["start_lat"]), float(row["start_lng"]))
         seg_type: Optional[str] = None
 
         for z in loading_zones:
             if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
-                if duration_s >= loading_dwell_s:
-                    seg_type = "loading"
+                seg_type = "loading"
                 break
         if seg_type is None:
             for z in unloading_zones:
                 if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
-                    if duration_s >= unloading_dwell_s:
-                        seg_type = "unloading"
+                    seg_type = "unloading"
                     break
 
         if seg_type:
@@ -373,8 +358,6 @@ async def resegment_history(
     invalidate_zone_cache()
 
     cfg = await _business_config_repo.get_singleton(conn)
-    loading_dwell_s: int   = cfg.loading_dwell_s   if cfg else 300
-    unloading_dwell_s: int = cfg.unloading_dwell_s if cfg else 300
     park_threshold_min: int = cfg.park_threshold_min if cfg else 10
     transport_timeout_min: int = cfg.transport_timeout_min if cfg else 30
 
@@ -400,8 +383,6 @@ async def resegment_history(
                 device_id=device_id,
                 cutoff=cutoff,
                 conn=conn,
-                loading_dwell_s=loading_dwell_s,
-                unloading_dwell_s=unloading_dwell_s,
                 park_threshold_min=park_threshold_min,
                 transport_timeout_min=transport_timeout_min,
                 loading_zones=loading_zones,

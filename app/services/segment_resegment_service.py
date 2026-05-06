@@ -12,8 +12,8 @@
 
 六种段类型说明
 --------------
-loading          装料中（在装料区驻留 ≥ loading_dwell_s 秒）
-unloading        卸料中（在卸料区驻留 ≥ unloading_dwell_s 秒）
+loading          装料中（进入装料区即刻确认）
+unloading        卸料中（进入卸料区即刻确认）
 transport_loaded 重载运输中（离开装料区 → 未超时到达卸料区）
 transport_empty  空载中（离开卸料区 → 未超时到达装料区）
 unknown          未知状态（运输超时后原地改类型；首次开机；其他无法分类情况）
@@ -195,8 +195,6 @@ class SegmentFSM:
         loading_zone: Optional[GeoZoneRow],
         unloading_zone: Optional[GeoZoneRow],
         *,
-        loading_dwell_s: int,
-        unloading_dwell_s: int,
         park_threshold_min: int,
         transport_timeout_min: int,
     ) -> None:
@@ -210,7 +208,6 @@ class SegmentFSM:
         # ── 围栏区域逻辑 ──────────────────────────────────────────────────
         if active_zone:
             zone_type = "loading" if loading_zone else "unloading"
-            dwell_threshold = loading_dwell_s if loading_zone else unloading_dwell_s
 
             if self.zone_entry_id != active_zone.id:
                 # 进入新围栏
@@ -219,11 +216,10 @@ class SegmentFSM:
                 self.zone_entry_lat = lat
                 self.zone_entry_lng = lng
 
-            # 驻留阈值确认（不重复标记已确认的装/卸料段）
+            # 进入围栏立即确认装/卸料（不重复标记已确认的装/卸料段）
             if (
                 self.seg_type not in _WORK_ZONE_TYPES
                 and self.zone_entry_at is not None
-                and (recorded_at - self.zone_entry_at).total_seconds() >= dwell_threshold
             ):
                 # 回溯：关闭前段（结束于 zone_entry_at），从 zone_entry_at 开启新段
                 self._close(self.zone_entry_at, self.zone_entry_lat, self.zone_entry_lng)
@@ -236,16 +232,16 @@ class SegmentFSM:
 
         else:
             # 在围栏外
-            if self.zone_entry_id is not None:
-                # 刚离开围栏
-                if self.seg_type in _WORK_ZONE_TYPES:
-                    prev = self.seg_type
-                    self._close(recorded_at, lat, lng)
-                    next_type = "transport_loaded" if prev == "loading" else "transport_empty"
-                    self._open(next_type, recorded_at, lat, lng, vehicle_id)
-                    self.transport_started_at = recorded_at
+            if self.zone_entry_id is not None and self.seg_type in _WORK_ZONE_TYPES:
+                # 已确认装/卸料段 → 关闭工作段，开启运输段，清除围栏计时
+                prev = self.seg_type
+                self._close(recorded_at, lat, lng)
+                next_type = "transport_loaded" if prev == "loading" else "transport_empty"
+                self._open(next_type, recorded_at, lat, lng, vehicle_id)
+                self.transport_started_at = recorded_at
                 self.zone_entry_id = None
                 self.zone_entry_at = None
+            # 未确认驻留的短暂离开：保留 zone_entry_ 不清除，防止 GPS 边界抖动使计时重置
 
             # ── 运输超时检测 ──────────────────────────────────────────────
             if (
@@ -307,8 +303,6 @@ async def resegment_device(
     device_id: int,
     cutoff: datetime,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
-    loading_dwell_s: int,
-    unloading_dwell_s: int,
     park_threshold_min: int,
     transport_timeout_min: int,
     loading_zones: list[GeoZoneRow],
@@ -363,8 +357,6 @@ async def resegment_device(
             vehicle_id=row["vehicle_id"],
             loading_zone=lz,
             unloading_zone=uz,
-            loading_dwell_s=loading_dwell_s,
-            unloading_dwell_s=unloading_dwell_s,
             park_threshold_min=park_threshold_min,
             transport_timeout_min=transport_timeout_min,
         )

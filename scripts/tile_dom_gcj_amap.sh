@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# WGS84 DOM → GCJ/WebMercator GeoTIFF → XYZ JPEG tiles for AMap overlay test.
+# WGS84 DOM → GCJ/WebMercator GeoTIFF → XYZ PNG tiles for AMap overlay test.
+# PNG preserves the alpha channel so tile edges are transparent (no black border).
 # Requires Docker image with GDAL + Python GDAL (see scripts/gdal-run.sh).
 set -euo pipefail
 
@@ -10,7 +11,6 @@ SRC="${1:-static/map/result_master_jpeg.tif}"
 WARPED="${2:-static/map/result_warp_gcj3857.tif}"
 OUTDIR="${3:-static/map/tiles_dom}"
 ZOOM="${ZOOM:-14-19}"
-JPEG_QUAL="${TILE_JPEG_QUALITY:-82}"
 
 run_docker() {
   docker run --rm \
@@ -20,14 +20,15 @@ run_docker() {
     "$@"
 }
 
-echo "[tile_dom_gcj_amap] warp $SRC → $WARPED …"
+echo "[tile_dom_gcj_amap] warp $SRC → $WARPED (DEFLATE+alpha) …"
 run_docker python3 scripts/warp_dom_gcj3857.py \
   "$SRC" "$WARPED" \
   --meta-out static/map/orthophoto_amap_meta.json \
   --zoom-for-meta "$ZOOM" \
-  --tile-url-suffix "/static/map/tiles_dom"
+  --tile-url-suffix "/static/map/tiles_dom" \
+  --tile-format png
 
-echo "[tile_dom_gcj_amap] gdal2tiles z=$ZOOM → $OUTDIR …"
+echo "[tile_dom_gcj_amap] gdal2tiles z=$ZOOM → $OUTDIR (PNG) …"
 rm -rf "$ROOT/$OUTDIR"
 mkdir -p "$ROOT/$OUTDIR"
 
@@ -37,8 +38,7 @@ run_docker gdal2tiles.py \
   --webviewer=none \
   --quiet \
   --tilesize=256 \
-  --tiledriver=JPEG \
-  --jpeg-quality="$JPEG_QUAL" \
+  --tiledriver=PNG \
   --resampling=bilinear \
   "$WARPED" "$OUTDIR"
 
