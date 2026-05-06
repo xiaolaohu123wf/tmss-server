@@ -37,10 +37,11 @@ _location_repo = LocationRepo()
 _event_repo = EventRepo()
 
 # 业务配置由调用方（connection.py）传入，避免每包查 DB
+# 装/卸料驻留阈值单位：秒（与 DB business_config 存储单位一致）
 _DEFAULT_SPEED_LIMIT = 80
 _DEFAULT_PARK_MIN = 10
-_DEFAULT_LOADING_MIN = 5
-_DEFAULT_UNLOADING_MIN = 5
+_DEFAULT_LOADING_S = 300    # 默认 5 分钟
+_DEFAULT_UNLOADING_S = 180  # 默认 3 分钟
 _DEFAULT_COOLDOWN_S = 10
 _DEFAULT_TRANSPORT_TIMEOUT_MIN = 30
 
@@ -51,8 +52,8 @@ class GpsHandler:
         registry: DeviceRegistry,
         global_speed_limit: int = _DEFAULT_SPEED_LIMIT,
         park_threshold_min: int = _DEFAULT_PARK_MIN,
-        loading_dwell_min: int = _DEFAULT_LOADING_MIN,
-        unloading_dwell_min: int = _DEFAULT_UNLOADING_MIN,
+        loading_dwell_min: int = _DEFAULT_LOADING_S,    # 单位：秒
+        unloading_dwell_min: int = _DEFAULT_UNLOADING_S,  # 单位：秒
         alert_cooldown_s: int = _DEFAULT_COOLDOWN_S,
         transport_timeout_min: int = _DEFAULT_TRANSPORT_TIMEOUT_MIN,
         has_restricted_zones: bool = False,
@@ -60,8 +61,8 @@ class GpsHandler:
         self._registry = registry
         self._speed_limit = global_speed_limit
         self._park_min = park_threshold_min
-        self._loading_min = loading_dwell_min
-        self._unloading_min = unloading_dwell_min
+        self._loading_min = loading_dwell_min    # 秒
+        self._unloading_min = unloading_dwell_min  # 秒
         self._cooldown_s = alert_cooldown_s
         self._transport_timeout_min = transport_timeout_min
         self._has_restricted = has_restricted_zones
@@ -196,22 +197,26 @@ class GpsHandler:
             lat=packet.lat,
             lng=packet.lng,
             conn=conn,
-            loading_dwell_min=self._loading_min,
-            unloading_dwell_min=self._unloading_min,
+            loading_dwell_s=self._loading_min,
+            unloading_dwell_s=self._unloading_min,
             transport_timeout_min=self._transport_timeout_min,
         )
 
         # 10. 实时推送（SSE）
+        # 注意：work_state_service.update() 已在步骤 8 中更新了 state.current_work_state，
+        # 此处推送最新状态，确保前端颜色/标签随状态机同步变化。
         location_payload = {
             "event": "location",
             "device_id": state.device_id,
             "vehicle_id": state.vehicle_id,
+            "fleet_id": state.fleet_id,
             "license_plate": state.license_plate,
             "lat": lat_gcj,
             "lng": lng_gcj,
             "speed": packet.speed,
             "altitude": packet.altitude,
-            "ts": recorded_at.isoformat(),
+            "work_state": state.current_work_state.value,
+            "recorded_at": recorded_at.isoformat(),
         }
         await event_bus.publish(f"location:{fleet_id}", location_payload)
         await event_bus.publish("location:all", location_payload)

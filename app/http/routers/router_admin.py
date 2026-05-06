@@ -267,17 +267,17 @@ async def reanalyze_segments(
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
     """
-    轻量版：仅对已有轨迹段进行装/卸料类型标注（不重建段）。
-    仅当起点在围栏内 **且** 持续时长 >= 对应区域的最低停留阈值时才打标签，
-    避免将短暂路过或原地驻留（<300 s）误判为装/卸料。
+    轻量版：对已有轨迹段按「起终点围栏对」重新标注类型。
+
+    标注规则（优先级最高）：
+      - 起点在取土区（loading）且终点在弃土区（unloading）→ 装料（loaded run）
+      - 起点在弃土区（unloading）且终点在取土区（loading）→ 卸料（empty return）
+      - 起终点相同围栏 / 仅一端在围栏 / 均不在围栏 → 不标注（NULL）
+
+    同时清除范围内已有的错误标注，重新按上述规则打标。
     """
-    import math as _math
     from app.core.enums import ZoneType
     from app.services.geofence_service import _load_zones, point_in_polygon, wgs84_to_gcj02
-
-    cfg = await _business_config_repo.get_singleton(conn)
-    loading_dwell_s = (cfg.loading_dwell_min if cfg else 300) * 60
-    unloading_dwell_s = (cfg.unloading_dwell_min if cfg else 180) * 60
 
     zones = await _load_zones(conn)
     loading_zones = [z for z in zones if z.zone_type == ZoneType.LOADING]
@@ -286,44 +286,47 @@ async def reanalyze_segments(
     if not loading_zones and not unloading_zones:
         return ok({"labeled": 0, "total_checked": 0, "message": "未发现已启用的取土/弃土围栏"})
 
+    def _zone_type(lat_wgs: float, lng_wgs: float) -> Optional[str]:
+        lat_g, lng_g = wgs84_to_gcj02(lat_wgs, lng_wgs)
+        for z in loading_zones:
+            if z.coordinates and point_in_polygon(lat_g, lng_g, z.coordinates):
+                return "loading"
+        for z in unloading_zones:
+            if z.coordinates and point_in_polygon(lat_g, lng_g, z.coordinates):
+                return "unloading"
+        return None
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # 查取所有已结束的段（含之前错误标注的，一并重算）
     rows = await conn.fetch(
         """
-        SELECT id, start_lat, start_lng, started_at, ended_at
+        SELECT id, start_lat, start_lng, end_lat, end_lng
         FROM track_segment
         WHERE started_at >= $1
           AND ended_at IS NOT NULL
-          AND segment_type IS NULL
-          AND start_lat IS NOT NULL
-          AND start_lng IS NOT NULL
+          AND start_lat IS NOT NULL AND start_lng IS NOT NULL
+          AND end_lat   IS NOT NULL AND end_lng   IS NOT NULL
         """,
         cutoff,
     )
 
     labeled = 0
     for row in rows:
-        duration_s = (row["ended_at"] - row["started_at"]).total_seconds()
-        lat_gcj, lng_gcj = wgs84_to_gcj02(float(row["start_lat"]), float(row["start_lng"]))
-        seg_type: Optional[str] = None
+        start_zone = _zone_type(float(row["start_lat"]), float(row["start_lng"]))
+        end_zone   = _zone_type(float(row["end_lat"]),   float(row["end_lng"]))
 
-        for z in loading_zones:
-            if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
-                if duration_s >= loading_dwell_s:
-                    seg_type = "loading"
-                break
-        if seg_type is None:
-            for z in unloading_zones:
-                if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
-                    if duration_s >= unloading_dwell_s:
-                        seg_type = "unloading"
-                    break
+        if start_zone == "loading" and end_zone == "unloading":
+            seg_type: Optional[str] = "loading"
+        elif start_zone == "unloading" and end_zone == "loading":
+            seg_type = "unloading"
+        else:
+            seg_type = None  # 清除可能存在的旧错误标注
 
+        await conn.execute(
+            "UPDATE track_segment SET segment_type = $1 WHERE id = $2",
+            seg_type, int(row["id"]),
+        )
         if seg_type:
-            await conn.execute(
-                "UPDATE track_segment SET segment_type = $1 WHERE id = $2",
-                seg_type,
-                int(row["id"]),
-            )
             labeled += 1
 
     return ok({"labeled": labeled, "total_checked": len(rows)})
@@ -336,40 +339,41 @@ async def resegment_history(
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
     """
-    重量级历史轨迹重分割：从原始定位点重建轨迹段。
-    分割规则：
-      1. 相邻两点时间间隔 > park_threshold_min → 强制断段
-      2. 点位进入/离开装料/卸料围栏 → 在边界处断段
-    标注规则：
-      段起点在围栏内 **且** 段持续时长 >= 对应区域 dwell_min → 标记 loading/unloading。
-    操作：删除范围内旧 track_segment，重新创建并更新 location_point.segment_id。
+    全量历史轨迹重分割：从原始定位点重建轨迹段。
+
+    分割规则（仅一条）：
+      相邻两点时间间隔 > park_threshold_min → 切断。
+      【不】按围栏边界切段——保留完整的取土区→弃土区运输段。
+
+    标注规则（起终点围栏对）：
+      - 起点在取土区 + 终点在弃土区 → loading（装料运输段）
+      - 起点在弃土区 + 终点在取土区 → unloading（空载返回段）
+      - 其他（同侧 / 均不在围栏 / 仅一端在围栏）→ NULL，不标注
+
+    操作：删除范围内旧 track_segment，重建并更新 location_point.segment_id。
     """
-    import math as _math
     from app.core.enums import ZoneType
     from app.services.geofence_service import _load_zones, point_in_polygon, wgs84_to_gcj02
 
     cfg = await _business_config_repo.get_singleton(conn)
     park_threshold_s: float = (cfg.park_threshold_min if cfg else 10) * 60
-    loading_dwell_s: float = (cfg.loading_dwell_min if cfg else 5) * 60
-    unloading_dwell_s: float = (cfg.unloading_dwell_min if cfg else 3) * 60
 
     zones = await _load_zones(conn)
-    loading_zones = [z for z in zones if z.zone_type == ZoneType.LOADING]
+    loading_zones  = [z for z in zones if z.zone_type == ZoneType.LOADING]
     unloading_zones = [z for z in zones if z.zone_type == ZoneType.UNLOADING]
 
-    def _check_zone(lat_wgs: float, lng_wgs: float) -> Optional[str]:
-        lat_gcj, lng_gcj = wgs84_to_gcj02(lat_wgs, lng_wgs)
+    def _zone_type(lat_wgs: float, lng_wgs: float) -> Optional[str]:
+        lat_g, lng_g = wgs84_to_gcj02(lat_wgs, lng_wgs)
         for z in loading_zones:
-            if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
+            if z.coordinates and point_in_polygon(lat_g, lng_g, z.coordinates):
                 return "loading"
         for z in unloading_zones:
-            if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
+            if z.coordinates and point_in_polygon(lat_g, lng_g, z.coordinates):
                 return "unloading"
         return None
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # 找出范围内有定位数据的所有设备
     device_rows = await conn.fetch(
         "SELECT DISTINCT device_id FROM location_point WHERE recorded_at >= $1",
         cutoff,
@@ -381,28 +385,25 @@ async def resegment_history(
     for dev_row in device_rows:
         device_id = int(dev_row["device_id"])
 
-        # 删除该设备在范围内的旧轨迹段（先解除 location_point 关联）
+        # 删除旧段并解除 location_point 关联
         old_seg_ids = [
             int(r["id"])
             for r in await conn.fetch(
                 "SELECT id FROM track_segment WHERE device_id = $1 AND started_at >= $2",
-                device_id,
-                cutoff,
+                device_id, cutoff,
             )
         ]
         if old_seg_ids:
             await conn.execute(
                 "UPDATE location_point SET segment_id = NULL"
                 " WHERE segment_id = ANY($1::BIGINT[]) AND recorded_at >= $2",
-                old_seg_ids,
-                cutoff,
+                old_seg_ids, cutoff,
             )
             await conn.execute(
                 "DELETE FROM track_segment WHERE id = ANY($1::BIGINT[])",
                 old_seg_ids,
             )
 
-        # 拉取该设备范围内所有定位点（按时间正序）
         pts = await conn.fetch(
             """
             SELECT id, vehicle_id, recorded_at,
@@ -412,59 +413,51 @@ async def resegment_history(
             WHERE device_id = $1 AND recorded_at >= $2
             ORDER BY recorded_at ASC, id ASC
             """,
-            device_id,
-            cutoff,
+            device_id, cutoff,
         )
         if not pts:
             continue
 
-        # ── 分段 Walk ────────────────────────────────────────────────
-        # 每个 pending segment 为 list of point records
-        segments: list[tuple[list, Optional[str]]] = []   # (pts_list, zone_type_at_start)
-        cur_pts: list = [pts[0]]
-        cur_zone: Optional[str] = _check_zone(float(pts[0]["lat"]), float(pts[0]["lng"]))
-
+        # ── 按时间间隔切段（不按围栏边界切）────────────────────────
+        raw_segments: list[list] = []
+        cur: list = [pts[0]]
         for i in range(1, len(pts)):
-            p = pts[i]
-            gap_s = (p["recorded_at"] - pts[i - 1]["recorded_at"]).total_seconds()
-            this_zone = _check_zone(float(p["lat"]), float(p["lng"]))
-
-            # 强制断段条件：时间间隔超阈值 or 围栏区域发生变化
-            if gap_s > park_threshold_s or this_zone != cur_zone:
-                segments.append((cur_pts, cur_zone))
-                cur_pts = [p]
-                cur_zone = this_zone
+            gap_s = (pts[i]["recorded_at"] - pts[i - 1]["recorded_at"]).total_seconds()
+            if gap_s > park_threshold_s:
+                raw_segments.append(cur)
+                cur = [pts[i]]
             else:
-                cur_pts.append(p)
+                cur.append(pts[i])
+        raw_segments.append(cur)
 
-        segments.append((cur_pts, cur_zone))
-
-        # ── 插入新轨迹段 ─────────────────────────────────────────────
-        for seg_pts, zone_type in segments:
+        # ── 插入新段，按起终点围栏对确定 segment_type ───────────────
+        for seg_pts in raw_segments:
             if not seg_pts:
                 continue
 
             started_at = seg_pts[0]["recorded_at"]
-            ended_at = seg_pts[-1]["recorded_at"]
-            start_lat = float(seg_pts[0]["lat"])
-            start_lng = float(seg_pts[0]["lng"])
-            end_lat = float(seg_pts[-1]["lat"])
-            end_lng = float(seg_pts[-1]["lng"])
-            duration_s = (ended_at - started_at).total_seconds()
+            ended_at   = seg_pts[-1]["recorded_at"]
+            start_lat  = float(seg_pts[0]["lat"])
+            start_lng  = float(seg_pts[0]["lng"])
+            end_lat    = float(seg_pts[-1]["lat"])
+            end_lng    = float(seg_pts[-1]["lng"])
 
-            # vehicle_id：取最后一个点的绑定（覆盖范围内绑定的最新值）
             vehicle_id: Optional[int] = None
             for p in reversed(seg_pts):
                 if p["vehicle_id"] is not None:
                     vehicle_id = int(p["vehicle_id"])
                     break
 
-            # 仅当在围栏内且持续时间满足阈值时才打标签
-            seg_type: Optional[str] = None
-            if zone_type == "loading" and duration_s >= loading_dwell_s:
-                seg_type = "loading"
-            elif zone_type == "unloading" and duration_s >= unloading_dwell_s:
-                seg_type = "unloading"
+            # 起终点围栏对判定
+            s_zone = _zone_type(start_lat, start_lng)
+            e_zone = _zone_type(end_lat,   end_lng)
+
+            if s_zone == "loading" and e_zone == "unloading":
+                seg_type: Optional[str] = "loading"    # 取土→弃土：装料运输
+            elif s_zone == "unloading" and e_zone == "loading":
+                seg_type = "unloading"                  # 弃土→取土：空载返回
+            else:
+                seg_type = None                         # 单侧/同侧/路途中：不标注
 
             seg_id: int = await conn.fetchval(
                 """
@@ -480,7 +473,6 @@ async def resegment_history(
                 len(seg_pts), seg_type,
             )
 
-            # 批量更新 location_point.segment_id
             pt_ids = [int(p["id"]) for p in seg_pts]
             await conn.execute(
                 "UPDATE location_point SET segment_id = $1"

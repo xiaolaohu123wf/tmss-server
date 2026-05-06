@@ -42,14 +42,15 @@ async def update(
     lat: float,
     lng: float,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
-    loading_dwell_min: int,
-    unloading_dwell_min: int,
+    loading_dwell_s: int,
+    unloading_dwell_s: int,
     transport_timeout_min: int = 30,
 ) -> None:
     """
     根据当前点围栏与车速，更新 state.current_work_state，并操作 work_session 表。
     lat/lng 为 WGS-84 原始坐标，用于在作业状态切换时正确关闭/开启轨迹段。
-    transport_timeout_min: 运输超时阈值，0 表示不启用超时检测。
+    loading_dwell_s / unloading_dwell_s：装/卸料最短驻留时长，单位**秒**（与 DB 存储单位一致）。
+    transport_timeout_min: 运输超时阈值（分钟），0 表示不启用超时检测。
     """
     if state.vehicle_id is None:
         return
@@ -82,7 +83,8 @@ async def update(
             state.transport_started_at = None
             return  # 本轮不再做围栏驻留检查
 
-    dwell_min = loading_dwell_min if loading_zone else unloading_dwell_min
+    # 当前围栏对应的驻留阈值（秒）
+    dwell_threshold_s = loading_dwell_s if loading_zone else unloading_dwell_s
 
     if dwell_zone:
         # 车辆在装/卸料围栏内
@@ -91,11 +93,12 @@ async def update(
             state.zone_entry_id = dwell_zone.id
             state.zone_entry_at = now
 
-        # 仅在停车状态下累计驻留时长；在围栏内缓慢行驶时保留计时但不推进状态
+        # 仅在停车状态下推进状态；在围栏内缓慢行驶时保留计时但不切换状态
         if is_stopped and state.zone_entry_at is not None:
-            dwell_s = (now - state.zone_entry_at).total_seconds()
+            elapsed_s = (now - state.zone_entry_at).total_seconds()
             target_state = WorkState.LOADING if loading_zone else WorkState.UNLOADING
-            if dwell_s >= dwell_min * 60 and state.current_work_state != target_state:
+            # dwell_threshold_s 单位为秒，与 elapsed_s 直接比较（无需乘 60）
+            if elapsed_s >= dwell_threshold_s and state.current_work_state != target_state:
                 await _transition(state, target_state, dwell_zone.id, lat, lng, conn, now)
     else:
         # 车辆已离开装/卸料围栏
