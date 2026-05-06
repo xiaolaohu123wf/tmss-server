@@ -66,6 +66,7 @@ async def _get_gps_handler() -> GpsHandler:
             loading_dwell_min=int(cfg["loading_dwell_min"]),
             unloading_dwell_min=int(cfg["unloading_dwell_min"]),
             alert_cooldown_s=int(cfg["alert_cooldown_s"]),
+            transport_timeout_min=int(cfg["transport_timeout_min"]),
             has_restricted_zones=has_restricted,
         )
     else:

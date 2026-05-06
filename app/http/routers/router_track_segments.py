@@ -71,6 +71,7 @@ class TrackSegmentListItem(BaseModel):
     started_at: str
     ended_at: Optional[str]
     distance_km: float
+    segment_type: Optional[str] = None  # 'loading' | 'unloading' | None
     start_zone_name: Optional[str]
     end_zone_name: Optional[str]
     cargo_name: Optional[str] = None
@@ -105,6 +106,11 @@ async def list_track_segments(
     to: datetime = Query(..., alias="to"),
     vehicle_id: Optional[int] = Query(None, ge=1),
     limit: int = Query(200, ge=1, le=500),
+    min_distance_km: float = Query(
+        0.3,
+        ge=0.0,
+        description="过滤掉行驶距离小于该值（km）的驻留段，传 0 可显示全部",
+    ),
 ) -> dict:
     if to <= from_:
         return ok([])
@@ -115,19 +121,29 @@ async def list_track_segments(
         to = to.replace(tzinfo=timezone.utc)
 
     ff = _fleet_filter(session)
+    # 多取一些以补偿过滤掉的驻留段；最多内部查 500 条
+    internal_limit = min(limit * 4, 500)
     rows = await _repo.list_segments(
         conn,
         started_from=from_,
         started_to=to,
         vehicle_id=vehicle_id,
         fleet_id=ff,
-        limit=limit,
+        limit=internal_limit,
     )
     ids = [r.id for r in rows]
     dist_map = await _repo.distance_km_for_segments(conn, ids)
 
     items: list[dict] = []
     for r in rows:
+        distance_km = round(dist_map.get(r.id, 0.0), 3)
+
+        # 过滤驻留段：距离过小且已结束的普通段视为原地停留，跳过；
+        # 装/卸料类型段（segment_type 非空）无论距离多短都保留；
+        # 进行中的段（ended_at=None）不过滤，避免漏掉当前正在行驶的段
+        if r.ended_at is not None and r.segment_type is None and distance_km < min_distance_km:
+            continue
+
         s_lat, s_lng = r.start_lat, r.start_lng
         e_lat = r.end_lat if r.end_lat is not None else r.last_lat
         e_lng = r.end_lng if r.end_lng is not None else r.last_lng
@@ -151,7 +167,8 @@ async def list_track_segments(
             license_plate=r.license_plate,
             started_at=r.started_at.isoformat(),
             ended_at=r.ended_at.isoformat() if r.ended_at else None,
-            distance_km=round(dist_map.get(r.id, 0.0), 3),
+            distance_km=distance_km,
+            segment_type=r.segment_type,
             start_zone_name=start_zone,
             end_zone_name=end_zone,
             cargo_name=None,
@@ -161,6 +178,8 @@ async def list_track_segments(
             end_lng=map_e_lng,
         )
         items.append(item.model_dump())
+        if len(items) >= limit:
+            break
 
     return ok(items)
 

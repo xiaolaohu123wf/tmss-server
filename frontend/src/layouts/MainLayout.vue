@@ -89,7 +89,7 @@ async function handleLogout() {
     >
       <div class="logo" :class="{ collapsed: isCollapse }">
         <el-icon size="24"><Monitor /></el-icon>
-        <span v-if="!isCollapse" class="logo-text">TMSS</span>
+        <span v-if="!isCollapse" class="logo-text">姚家平监管</span>
       </div>
 
       <el-menu
@@ -131,7 +131,7 @@ async function handleLogout() {
         </el-icon>
 
         <div class="header-title" :class="{ 'header-title--mobile': isMobile }">
-          {{ isMobile ? 'TMSS 管控系统' : 'TMSS 车辆监控系统' }}
+          {{ isMobile ? '姚家平监管平台' : '姚家平车辆智能监管平台' }}
         </div>
 
         <div class="header-right">
@@ -168,7 +168,13 @@ async function handleLogout() {
       <TabBar v-if="!isMobile" />
 
       <!-- 页面内容 -->
-      <el-main class="layout-main" :class="{ 'layout-main--mobile': isMobile }">
+      <el-main
+        class="layout-main"
+        :class="{
+          'layout-main--mobile': isMobile,
+          'layout-main--fullscreen': !isMobile && route.meta.noPadding,
+        }"
+      >
         <RouterView v-slot="{ Component, route: r }">
           <keep-alive :include="tabsStore.cachedNames">
             <component :is="Component" :key="r.name as string" />
@@ -188,7 +194,7 @@ async function handleLogout() {
     >
       <div class="drawer-header">
         <el-icon size="22" color="#1890ff"><Monitor /></el-icon>
-        <span class="drawer-title">TMSS</span>
+        <span class="drawer-title">姚家平监管平台</span>
         <el-tag :type="auth.isManager ? 'danger' : 'info'" size="small" style="margin-left:auto">
           {{ auth.session?.username }}
         </el-tag>
@@ -318,6 +324,10 @@ async function handleLogout() {
   scrollbar-gutter: stable;
 }
 .layout-main--mobile {
+  padding: 0;
+  overflow: hidden;
+}
+.layout-main--fullscreen {
   padding: 0;
   overflow: hidden;
 }

@@ -1,6 +1,6 @@
 INSERT_SEGMENT_SQL = """
-    INSERT INTO track_segment (device_id, vehicle_id, started_at, start_lat, start_lng)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO track_segment (device_id, vehicle_id, started_at, start_lat, start_lng, segment_type)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING id
 """
 
@@ -21,7 +21,7 @@ INCREMENT_SEGMENT_POINTS_SQL = """
 """
 
 SELECT_OPEN_SEGMENT_BY_DEVICE_SQL = """
-    SELECT id, device_id, vehicle_id, started_at, start_lat, start_lng, point_count
+    SELECT id, device_id, vehicle_id, started_at, start_lat, start_lng, point_count, segment_type
     FROM track_segment
     WHERE device_id = $1
       AND ended_at IS NULL

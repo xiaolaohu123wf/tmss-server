@@ -2,10 +2,16 @@
 import { ref, watch, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { geoZonesApi } from '@/api/geoZones'
-import { useAmap, type AMapPolygon } from '@/composables/useAmap'
+import { tracksApi } from '@/api/tracks'
+import { useAmap, type AMapPolygon, type AMapPolyline } from '@/composables/useAmap'
 import GeoZoneTypeTag from '@/components/GeoZoneTypeTag.vue'
 import type { GeoZone, GeoZoneCreate, GeoZoneType, Coordinate } from '@/types'
+import { get } from '@/api/index'
+
+dayjs.extend(utc)
 
 defineOptions({ name: 'GeoZonesView' })
 
@@ -17,11 +23,43 @@ const {
   map,
   init: initMap,
   createPolygon,
+  createPolyline,
   removePolygon,
   updatePolygonColor,
   fitPolygon,
   startDrawPolygon,
+  setLayers,
 } = useAmap('geo-zone-map', { zoom: 14, center: [109.4753, 30.2832] })
+
+// ─── layer switcher ───────────────────────────────────────────────────────────
+type LayerKey = 'standard' | 'satellite' | 'satellite_road'
+
+const LAYER_OPTIONS: { key: LayerKey; label: string; icon: string }[] = [
+  { key: 'standard',       label: '标准地图',  icon: '🗺️' },
+  { key: 'satellite',      label: '卫星图',    icon: '🛰️' },
+  { key: 'satellite_road', label: '卫星+路网', icon: '🛣️' },
+]
+
+const activeLayer = ref<LayerKey>('satellite_road')
+
+function switchLayer(key: LayerKey) {
+  if (!window.AMap) return
+  activeLayer.value = key
+  switch (key) {
+    case 'standard':
+      setLayers([new window.AMap.TileLayer()])
+      break
+    case 'satellite':
+      setLayers([new window.AMap.TileLayer.Satellite()])
+      break
+    case 'satellite_road':
+      setLayers([
+        new window.AMap.TileLayer.Satellite(),
+        new window.AMap.TileLayer.RoadNet(),
+      ])
+      break
+  }
+}
 
 // Map from zone.id to its rendered polygon
 const polygonMap = new Map<number, AMapPolygon>()
@@ -30,6 +68,78 @@ let highlightPolygon: AMapPolygon | null = null
 // Preview polygon drawn by MouseTool (not yet saved)
 let previewPolygon: AMapPolygon | null = null
 let cancelDrawFn: (() => void) | null = null
+
+// ─── track overlay ────────────────────────────────────────────────────────────
+const trackOverlayOn = ref(false)
+const trackOverlayLoading = ref(false)
+let trackPolylines: AMapPolyline[] = []
+
+/** Haversine 距离（米） */
+function _distM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+/** 按 100m 跳变阈值切分轨迹点 */
+function _splitPath(pts: Array<{ lat: number; lng: number }>, maxM = 100): Array<Array<{ lat: number; lng: number }>> {
+  if (!pts.length) return []
+  const segs: Array<Array<{ lat: number; lng: number }>> = []
+  let cur = [pts[0]]
+  for (let i = 1; i < pts.length; i++) {
+    if (_distM(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng) > maxM) {
+      if (cur.length > 1) segs.push(cur)
+      cur = [pts[i]]
+    } else {
+      cur.push(pts[i])
+    }
+  }
+  if (cur.length > 1) segs.push(cur)
+  return segs
+}
+
+function _clearTrackPolylines() {
+  for (const pl of trackPolylines) pl.setMap(null)
+  trackPolylines = []
+}
+
+async function toggleTrackOverlay() {
+  if (trackOverlayOn.value) {
+    _clearTrackPolylines()
+    trackOverlayOn.value = false
+    return
+  }
+  trackOverlayLoading.value = true
+  try {
+    const now = dayjs()
+    const segments = await tracksApi.list({
+      from: now.subtract(1, 'day').utc().format(),
+      to: now.utc().format(),
+      limit: 50,
+      min_distance_km: 0.3,
+    })
+    for (const seg of segments) {
+      const pts = await tracksApi.points(seg.id, 5000)
+      if (pts.length < 2) continue
+      const subPaths = _splitPath(pts)
+      for (const sub of subPaths) {
+        const path: [number, number][] = sub.map((p) => [p.lng, p.lat])
+        trackPolylines.push(createPolyline(path, '#69b1ff', 2))
+      }
+    }
+    trackOverlayOn.value = true
+    if (!trackPolylines.length) ElMessage.info('近24小时暂无有效轨迹')
+  } catch {
+    ElMessage.error('加载轨迹失败')
+  } finally {
+    trackOverlayLoading.value = false
+  }
+}
 
 // ─── panel state ──────────────────────────────────────────────────────────────
 // 'list' = 展示围栏列表, 'form' = 展示编辑表单
@@ -137,7 +247,17 @@ async function loadData() {
 
 onMounted(async () => {
   await nextTick()
-  initMap()
+  // 读取系统设置中的默认地图中心
+  let centerOverride: [number, number] | undefined
+  try {
+    const cfg = await get<{ map_center_lng: number; map_center_lat: number }>('/admin/map-config')
+    centerOverride = [cfg.map_center_lng, cfg.map_center_lat]
+  } catch {
+    // 降级使用默认值
+  }
+  initMap(centerOverride)
+  // 默认使用卫星+路网，便于绘制围栏时参照实地地貌
+  switchLayer('satellite_road')
   await loadData()
 })
 
@@ -257,6 +377,35 @@ async function handleToggle(zone: GeoZone) {
     <!-- ───── Map ───── -->
     <div class="map-panel">
       <div id="geo-zone-map" class="amap-container" />
+
+      <!-- 右上角工具栏：图层切换 + 轨迹叠加 -->
+      <div class="map-toolbar">
+        <!-- 图层切换 -->
+        <div class="layer-switcher">
+          <button
+            v-for="opt in LAYER_OPTIONS"
+            :key="opt.key"
+            class="layer-btn"
+            :class="{ active: activeLayer === opt.key }"
+            :title="opt.label"
+            @click="switchLayer(opt.key)"
+          >
+            <span class="layer-icon">{{ opt.icon }}</span>
+            <span class="layer-label">{{ opt.label }}</span>
+          </button>
+        </div>
+
+        <!-- 轨迹叠加 -->
+        <el-button
+          size="small"
+          :type="trackOverlayOn ? 'primary' : 'default'"
+          :loading="trackOverlayLoading"
+          @click="toggleTrackOverlay"
+        >
+          {{ trackOverlayOn ? '隐藏轨迹' : '显示近24h轨迹' }}
+        </el-button>
+      </div>
+
       <!-- Drawing tip overlay -->
       <transition name="fade">
         <div v-if="isDrawing" class="draw-tip">
@@ -449,6 +598,46 @@ async function handleToggle(zone: GeoZone) {
   height: 100%;
 }
 
+/* 右上角工具栏容器 */
+.map-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 图层切换按钮组 */
+.layer-switcher {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.layer-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  color: #333;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.layer-btn:hover { background: rgba(255,255,255,.98); border-color: #409eff; }
+.layer-btn.active { background: #409eff; border-color: #409eff; color: #fff; }
+.layer-icon { font-size: 14px; line-height: 1; }
+.layer-label { font-size: 11px; }
+
 /* Drawing tip banner overlaid on map */
 .draw-tip {
   position: absolute;
@@ -475,7 +664,7 @@ async function handleToggle(zone: GeoZone) {
   overflow: auto;
 }
 .side-panel {
-  width: 400px;
+  width: 300px;
   flex-shrink: 0;
   background: #fff;
   border-left: 1px solid #e4e7ed;

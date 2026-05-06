@@ -29,7 +29,7 @@ from app.db.repos.event_repo import EventRepo
 from app.db.repos.location_repo import LocationRepo, LocationRow
 from app.models.tcp_packets import GpsPacket
 from app.services import alert_service, command_service, track_segment_service, work_state_service
-from app.services.geofence_service import get_zones_at
+from app.services.geofence_service import get_zones_at, wgs84_to_gcj02
 
 logger = structlog.get_logger()
 
@@ -42,6 +42,7 @@ _DEFAULT_PARK_MIN = 10
 _DEFAULT_LOADING_MIN = 5
 _DEFAULT_UNLOADING_MIN = 5
 _DEFAULT_COOLDOWN_S = 10
+_DEFAULT_TRANSPORT_TIMEOUT_MIN = 30
 
 
 class GpsHandler:
@@ -53,6 +54,7 @@ class GpsHandler:
         loading_dwell_min: int = _DEFAULT_LOADING_MIN,
         unloading_dwell_min: int = _DEFAULT_UNLOADING_MIN,
         alert_cooldown_s: int = _DEFAULT_COOLDOWN_S,
+        transport_timeout_min: int = _DEFAULT_TRANSPORT_TIMEOUT_MIN,
         has_restricted_zones: bool = False,
     ) -> None:
         self._registry = registry
@@ -61,6 +63,7 @@ class GpsHandler:
         self._loading_min = loading_dwell_min
         self._unloading_min = unloading_dwell_min
         self._cooldown_s = alert_cooldown_s
+        self._transport_timeout_min = transport_timeout_min
         self._has_restricted = has_restricted_zones
 
     async def handle(
@@ -95,6 +98,9 @@ class GpsHandler:
         await self._registry.push_point(state.device_id, packet)
 
         # 2. 获取/推进轨迹段
+        # 装/卸料状态下抑制驻留分段，整个操作过程保持一条连续段
+        from app.core.enums import WorkState as _WS
+        _in_work_zone = state.current_work_state in (_WS.LOADING, _WS.UNLOADING)
         segment_id: Optional[int] = await track_segment_service.get_or_advance_segment(
             state=state,
             lat=packet.lat,
@@ -102,6 +108,7 @@ class GpsHandler:
             recorded_at=recorded_at,
             conn=conn,
             park_threshold_min=self._park_min,
+            suppress_stationary_split=_in_work_zone,
         )
 
         # 3. 写入定位点
@@ -121,6 +128,9 @@ class GpsHandler:
 
         # 4. 围栏判断
         zones = await get_zones_at(packet.lat, packet.lng, conn)
+
+        # WGS-84 → GCJ-02：SSE 推送与高德地图展示均使用火星坐标
+        lat_gcj, lng_gcj = wgs84_to_gcj02(packet.lat, packet.lng)
 
         # 5-7. 告警检查 → 指令下发 → 事件写入
         alert_result = await alert_service.process_location(
@@ -163,7 +173,7 @@ class GpsHandler:
                 event_id=event_id,
                 speed_kmh=alert.speed,
             )
-            # 告警事件推送到 SSE
+            # 告警事件推送到 SSE（坐标同步转为 GCJ-02）
             alert_payload = {
                 "event": "alert",
                 "device_id": state.device_id,
@@ -171,8 +181,8 @@ class GpsHandler:
                 "type": alert.event_type,
                 "speed": alert.speed,
                 "zone_id": alert.zone_id,
-                "lat": packet.lat,
-                "lng": packet.lng,
+                "lat": lat_gcj,
+                "lng": lng_gcj,
                 "ts": recorded_at.isoformat(),
             }
             await event_bus.publish(f"alert:{fleet_id}", alert_payload)
@@ -183,9 +193,12 @@ class GpsHandler:
             state=state,
             zones_at_point=zones,
             speed=packet.speed,
+            lat=packet.lat,
+            lng=packet.lng,
             conn=conn,
             loading_dwell_min=self._loading_min,
             unloading_dwell_min=self._unloading_min,
+            transport_timeout_min=self._transport_timeout_min,
         )
 
         # 10. 实时推送（SSE）
@@ -194,8 +207,8 @@ class GpsHandler:
             "device_id": state.device_id,
             "vehicle_id": state.vehicle_id,
             "license_plate": state.license_plate,
-            "lat": packet.lat,
-            "lng": packet.lng,
+            "lat": lat_gcj,
+            "lng": lng_gcj,
             "speed": packet.speed,
             "altitude": packet.altitude,
             "ts": recorded_at.isoformat(),

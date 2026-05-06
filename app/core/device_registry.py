@@ -40,6 +40,10 @@ class DeviceState:
     # 作业状态机：当前驻留区的进入时刻 (用于 dwell 计算)
     zone_entry_at: Optional[datetime] = None
     zone_entry_id: Optional[int] = None   # 正在计时驻留的 zone_id
+    # 当前段类型：None=普通, 'loading'=装料, 'unloading'=卸料
+    current_segment_type: Optional[str] = None
+    # 运输超时计时：进入 TRANSPORT_LOADED / TRANSPORT_EMPTY 时记录起始时刻
+    transport_started_at: Optional[datetime] = None
     # 防止短暂重连期间两个连接并发开段（asyncio 协作式，Lock 足够）
     segment_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -142,6 +146,8 @@ class DeviceRegistry:
         state.stationary_anchor_lat = None
         state.stationary_anchor_lng = None
         state.stationary_since = None
+        state.current_segment_type = None
+        state.transport_started_at = None
         await logger.ainfo(
             "device_binding_updated",
             device_id=device_id,

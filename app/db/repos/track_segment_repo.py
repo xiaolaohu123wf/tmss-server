@@ -23,6 +23,7 @@ class TrackSegmentRow:
     start_lat: Optional[float]
     start_lng: Optional[float]
     point_count: int
+    segment_type: Optional[str] = None
 
 
 class TrackSegmentRepo:
@@ -34,10 +35,11 @@ class TrackSegmentRepo:
         start_lat: float,
         start_lng: float,
         vehicle_id: Optional[int] = None,
+        segment_type: Optional[str] = None,
     ) -> int:
         segment_id: int = await conn.fetchval(
             INSERT_SEGMENT_SQL,
-            device_id, vehicle_id, started_at, start_lat, start_lng,
+            device_id, vehicle_id, started_at, start_lat, start_lng, segment_type,
         )
         return segment_id
 
@@ -74,4 +76,5 @@ class TrackSegmentRepo:
             start_lat=float(row["start_lat"]) if row["start_lat"] is not None else None,
             start_lng=float(row["start_lng"]) if row["start_lng"] is not None else None,
             point_count=row["point_count"],
+            segment_type=row["segment_type"],
         )

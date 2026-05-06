@@ -80,6 +80,14 @@ do_start() {
         echo "════════════════════════════════════════════════════════════"
     } >> "$LOG_FILE"
 
+    # 自动应用数据库迁移（幂等，多次执行无副作用）
+    echo "[INFO] 执行数据库迁移..."
+    if ! alembic upgrade head >> "$LOG_FILE" 2>&1; then
+        echo "[ERROR] 数据库迁移失败，请查看日志：tail -n 50 $LOG_FILE" >&2
+        exit 1
+    fi
+    echo "[INFO] 迁移完成"
+
     nohup python -m app.main >> "$LOG_FILE" 2>&1 &
     local new_pid=$!
     echo "$new_pid" > "$PID_FILE"

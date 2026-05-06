@@ -19,6 +19,7 @@ _SEGMENT_LIST_SQL = """
         ts.end_lat,
         ts.end_lng,
         ts.point_count,
+        ts.segment_type,
         lp_end.lat AS last_lat,
         lp_end.lng AS last_lng,
         COALESCE(lp_start.loc_type::text, 'gps') AS start_loc_type,
@@ -118,6 +119,7 @@ class TrackSegmentListRow:
     end_lat: Optional[float]
     end_lng: Optional[float]
     point_count: int
+    segment_type: Optional[str]
     last_lat: Optional[float]
     last_lng: Optional[float]
     start_loc_type: str
@@ -167,6 +169,7 @@ class TrackQueryRepo:
                     end_lat=float(r["end_lat"]) if r["end_lat"] is not None else None,
                     end_lng=float(r["end_lng"]) if r["end_lng"] is not None else None,
                     point_count=int(r["point_count"]),
+                    segment_type=r["segment_type"],
                     last_lat=float(r["last_lat"]) if r["last_lat"] is not None else None,
                     last_lng=float(r["last_lng"]) if r["last_lng"] is not None else None,
                     start_loc_type=str(r["start_loc_type"] or "gps"),

@@ -8,6 +8,8 @@ export interface TrackSegment {
   started_at: string
   ended_at: string | null
   distance_km: number
+  /** null=普通行驶段; 'loading'=装料; 'unloading'=卸料 */
+  segment_type: 'loading' | 'unloading' | null
   start_zone_name: string | null
   end_zone_name: string | null
   cargo_name: string | null
@@ -37,13 +39,20 @@ function q(u: string, p: Record<string, string | number | undefined>) {
 }
 
 export const tracksApi = {
-  list: (params: { from: string; to: string; vehicle_id?: number; limit?: number }) =>
+  list: (params: {
+    from: string
+    to: string
+    vehicle_id?: number
+    limit?: number
+    min_distance_km?: number
+  }) =>
     get<TrackSegment[]>(
       q('/track-segments', {
         from: params.from,
         to: params.to,
         vehicle_id: params.vehicle_id,
         limit: params.limit,
+        min_distance_km: params.min_distance_km,
       }),
     ),
 

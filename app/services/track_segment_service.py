@@ -7,13 +7,19 @@
 分段规则（满足任一即开新段）：
   1. 时间间隔：上一包与当前包时刻差 ≥ park_threshold_min 分钟
   2. 停车驻留：距最后一次"移动"（位移 > PARK_STATIONARY_RADIUS_M 米）已超 park_threshold_min 分钟
+     ⚠ 当 suppress_stationary_split=True 时跳过规则 2（装/卸料状态下保持一条段）
   - 首包：开启新段
   - 否则：续接当前段
+
+特殊操作：
+  switch_segment_type() — 工作状态切换时（装/卸料开始/结束）调用，
+  关闭当前段并开启指定类型的新段，同步更新 DeviceState。
 """
 from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from typing import Optional
 
 import asyncpg
 import structlog
@@ -31,7 +37,7 @@ PARK_STATIONARY_RADIUS_M = 10.0
 
 def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Haversine 距离（米），适用于短距离（误差 < 0.1%）。"""
-    r = 6_371_000.0  # 地球半径（米）
+    r = 6_371_000.0
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -47,15 +53,15 @@ async def get_or_advance_segment(
     recorded_at: datetime,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
     park_threshold_min: int,
+    suppress_stationary_split: bool = False,
 ) -> int:
     """
     返回当前有效的 segment_id（int）。
-    副作用：更新 state.current_segment_id、state.last_point_at、驻留锚点。
-    使用 state.segment_lock 保证同一设备并发 GPS 包不会重复开段。
+    suppress_stationary_split=True 时跳过规则 2（装/卸料期间不按驻留切段）。
     """
     async with state.segment_lock:
         return await _get_or_advance_segment_locked(
-            state, lat, lng, recorded_at, conn, park_threshold_min
+            state, lat, lng, recorded_at, conn, park_threshold_min, suppress_stationary_split
         )
 
 
@@ -66,6 +72,7 @@ async def _get_or_advance_segment_locked(
     recorded_at: datetime,
     conn: asyncpg.Connection,  # type: ignore[type-arg]
     park_threshold_min: int,
+    suppress_stationary_split: bool,
 ) -> int:
     now = recorded_at
 
@@ -74,10 +81,8 @@ async def _get_or_advance_segment_locked(
         existing = await _ts_repo.find_open_by_device(conn, state.device_id)
         if existing:
             if existing.vehicle_id == state.vehicle_id:
-                # 车辆绑定未变，续接旧段
                 state.current_segment_id = existing.id
-                # 取该段最后一个定位点的时间，作为时间差计算基准
-                # （不能用 started_at，否则 Rule 2 会把整段历史时间都算进去）
+                state.current_segment_type = existing.segment_type
                 last_ts = await conn.fetchval(
                     "SELECT recorded_at FROM location_point"
                     " WHERE segment_id = $1 ORDER BY recorded_at DESC LIMIT 1",
@@ -85,7 +90,6 @@ async def _get_or_advance_segment_locked(
                 )
                 state.last_point_at = last_ts if last_ts is not None else existing.started_at
             else:
-                # 车辆绑定已变更，关闭旧段，下方逻辑会开新段
                 end_lat = existing.start_lat or lat
                 end_lng = existing.start_lng or lng
                 await _ts_repo.close_segment(
@@ -120,25 +124,22 @@ async def _get_or_advance_segment_locked(
                 gap_min=round(gap_min, 1),
             )
 
-    # ── 规则 3：停车驻留分段（位移半径 < PARK_STATIONARY_RADIUS_M） ───────────
-    if not need_new and state.current_segment_id is not None:
+    # ── 规则 3：停车驻留分段（suppress_stationary_split=True 时跳过）────────
+    if not need_new and not suppress_stationary_split and state.current_segment_id is not None:
         anchor_lat = state.stationary_anchor_lat
         anchor_lng = state.stationary_anchor_lng
 
         if anchor_lat is None or anchor_lng is None:
-            # 初始化锚点
             state.stationary_anchor_lat = lat
             state.stationary_anchor_lng = lng
             state.stationary_since = now
         else:
             dist = _distance_m(anchor_lat, anchor_lng, lat, lng)
             if dist > PARK_STATIONARY_RADIUS_M:
-                # 设备移动了，更新锚点
                 state.stationary_anchor_lat = lat
                 state.stationary_anchor_lng = lng
                 state.stationary_since = now
             else:
-                # 设备在锚点附近（停车中），检查驻留时长
                 if state.stationary_since is not None:
                     parked_min = (now - state.stationary_since).total_seconds() / 60.0
                     if parked_min >= park_threshold_min:
@@ -152,7 +153,6 @@ async def _get_or_advance_segment_locked(
 
     # ── 执行分段 ──────────────────────────────────────────────────────────────
     if need_new:
-        # 关闭旧段（如存在）
         if state.current_segment_id is not None and state.last_point_at is not None:
             await _ts_repo.close_segment(
                 conn,
@@ -174,15 +174,16 @@ async def _get_or_advance_segment_locked(
             start_lat=lat,
             start_lng=lng,
             vehicle_id=state.vehicle_id,
+            segment_type=None,  # 普通段；类型段由 switch_segment_type 开启
         )
         state.current_segment_id = seg_id
+        state.current_segment_type = None
         await logger.ainfo(
             "track_segment_opened",
             device_id=state.device_id,
             segment_id=seg_id,
         )
 
-        # 新段开启：重置驻留锚点
         state.stationary_anchor_lat = lat
         state.stationary_anchor_lng = lng
         state.stationary_since = now
@@ -192,3 +193,62 @@ async def _get_or_advance_segment_locked(
 
     state.last_point_at = now
     return state.current_segment_id  # type: ignore[return-value]
+
+
+async def switch_segment_type(
+    state: DeviceState,
+    new_type: Optional[str],
+    lat: float,
+    lng: float,
+    now: datetime,
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> int:
+    """
+    关闭当前段，立即开启类型为 new_type 的新段。
+    new_type: 'loading' | 'unloading' | None（None=普通行驶段）
+
+    在 work_state_service 作业状态转换时调用；使用 segment_lock 避免并发问题。
+    """
+    async with state.segment_lock:
+        # 关闭当前段
+        if state.current_segment_id is not None and state.last_point_at is not None:
+            await _ts_repo.close_segment(
+                conn,
+                segment_id=state.current_segment_id,
+                ended_at=now,
+                end_lat=lat,
+                end_lng=lng,
+            )
+            await logger.ainfo(
+                "track_segment_closed_for_type_switch",
+                device_id=state.device_id,
+                segment_id=state.current_segment_id,
+                old_type=state.current_segment_type,
+                new_type=new_type,
+            )
+
+        # 开启新段
+        seg_id = await _ts_repo.open_segment(
+            conn,
+            device_id=state.device_id,
+            started_at=now,
+            start_lat=lat,
+            start_lng=lng,
+            vehicle_id=state.vehicle_id,
+            segment_type=new_type,
+        )
+        state.current_segment_id = seg_id
+        state.current_segment_type = new_type
+        state.last_point_at = now
+        # 重置驻留锚点（新段开始位置作为新锚点）
+        state.stationary_anchor_lat = lat
+        state.stationary_anchor_lng = lng
+        state.stationary_since = now
+
+        await logger.ainfo(
+            "track_segment_type_switched",
+            device_id=state.device_id,
+            segment_id=seg_id,
+            segment_type=new_type,
+        )
+        return seg_id

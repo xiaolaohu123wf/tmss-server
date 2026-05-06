@@ -1,6 +1,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+declare module 'vue-router' {
+  interface RouteMeta {
+    layout?: string
+    title?: string
+    public?: boolean
+    requiresManager?: boolean
+    /** 去掉 layout-main 的 padding，页面内容贴边显示（用于地图全屏页面） */
+    noPadding?: boolean
+  }
+}
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -49,7 +60,7 @@ const router = createRouter({
       path: '/tracks',
       name: 'tracks',
       component: () => import('@/views/TracksView.vue'),
-      meta: { layout: 'main', title: '轨迹查询' },
+      meta: { layout: 'main', title: '轨迹查询', noPadding: true },
     },
     {
       path: '/users',

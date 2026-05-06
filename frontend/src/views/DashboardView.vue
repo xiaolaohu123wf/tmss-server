@@ -19,20 +19,28 @@ import VehicleStatusTag from '@/components/VehicleStatusTag.vue'
 import EventTypeTag from '@/components/EventTypeTag.vue'
 import type { VehiclePosition, AlertFrame, WorkState } from '@/types'
 import { formatChinaDateTime } from '@/utils/datetime'
+import { get } from '@/api/index'
+import { geoZonesApi } from '@/api/geoZones'
+import type { GeoZone, Coordinate } from '@/types'
+import type { AMapPolygon } from '@/composables/useAmap'
 
 const dashboardStore = useDashboardStore()
 const authStore = useAuthStore()
 
-// Map — 中心点：恩施市
-const { map, init: initMap, setLayers } = useAmap('dashboard-map', {
+// 地图中心点初始值（等待后端返回后覆盖）
+const mapCenter = ref<[number, number]>([109.4753, 30.2832])
+
+const { map, init: initMap, setLayers, createPolygon } = useAmap('dashboard-map', {
   zoom: 14,
-  center: [109.4753, 30.2832],
+  center: mapCenter.value,
 })
 
 // ─── Marker + Trail registries ────────────────────────────────────────────────
 const markerMap = new Map<number, unknown>()
 // Track last work_state per vehicle — setContent() is expensive, skip if state unchanged
 const markerWorkState = new Map<number, WorkState>()
+// Track last rendered heading (degrees from north) per vehicle
+const markerHeading = new Map<number, number | null>()
 // Trail: vehicleId → last TRAIL_MAX [lng, lat] points
 const TRAIL_MAX = 10
 const trailPoints = new Map<number, [number, number][]>()
@@ -85,6 +93,50 @@ function switchLayer(key: LayerKey) {
   }
 }
 
+// ─── Geofence overlay ────────────────────────────────────────────────────────
+const geoZoneOverlayOn = ref(false)
+const geoZoneLoading = ref(false)
+let geoZonePolygons: AMapPolygon[] = []
+
+const ZONE_COLORS: Record<string, string> = {
+  loading:       '#52c41a',
+  unloading:     '#fa8c16',
+  restricted:    '#f5222d',
+  sharp_curve:   '#1890ff',
+  single_bridge: '#595959',
+  speed_zone:    '#722ed1',
+}
+
+function _clearZonePolygons() {
+  for (const p of geoZonePolygons) {
+    try { p.setMap(null) } catch { /* ignore */ }
+  }
+  geoZonePolygons = []
+}
+
+async function toggleGeoZoneOverlay() {
+  if (geoZoneOverlayOn.value) {
+    _clearZonePolygons()
+    geoZoneOverlayOn.value = false
+    return
+  }
+  geoZoneLoading.value = true
+  try {
+    const zones = await geoZonesApi.list()
+    for (const zone of zones.filter((z) => z.is_enabled)) {
+      const color = ZONE_COLORS[zone.zone_type] ?? '#1890ff'
+      const poly = createPolygon(zone.coordinates as Coordinate[], zone, color, 0.15)
+      geoZonePolygons.push(poly)
+    }
+    geoZoneOverlayOn.value = true
+    if (!geoZonePolygons.length) ElNotification({ type: 'info', title: '暂无启用的电子围栏', duration: 2000 })
+  } catch {
+    ElNotification({ type: 'error', title: '围栏加载失败', duration: 2500 })
+  } finally {
+    geoZoneLoading.value = false
+  }
+}
+
 // ─── Vehicle detail ───────────────────────────────────────────────────────────
 const selectedVehicle = ref<VehiclePosition | null>(null)
 const detailPanelVisible = ref(false)
@@ -99,24 +151,82 @@ const STATE_COLORS: Record<WorkState, string> = {
 }
 
 /**
- * 小卡车 SVG + 车牌标注（车牌在上方）。
- * anchor:'bottom-center' 已由 AMap Marker 处理，不再加 transform。
+ * 从 trail（最近 TRAIL_MAX 个 [lng, lat] 点）计算行驶方位角（北为 0°，顺时针）。
+ * 取倒数第 1 点与倒数第 lookback+1 点之间的方位角，lookback 越大越平滑。
+ * 若点数不足或位移太小则返回 null（保持上次方向）。
  */
-function makeTruckContent(pos: VehiclePosition): string {
+function _computeHeading(trail: [number, number][]): number | null {
+  if (trail.length < 2) return null
+  const lookback = Math.min(trail.length - 1, 5)
+  const [lng1, lat1] = trail[trail.length - 1 - lookback]
+  const [lng2, lat2] = trail[trail.length - 1]
+  const dLng = lng2 - lng1
+  const dLat = lat2 - lat1
+  // 忽略极小位移（设备静止或漂移），不更新方向
+  if (dLng * dLng + dLat * dLat < 1e-12) return null
+  const deg = Math.atan2(dLng, dLat) * (180 / Math.PI)
+  return (deg + 360) % 360
+}
+
+/**
+ * 判断两个 heading 角度之差是否超过阈值（考虑 0/360 折叠）。
+ */
+function _headingChanged(a: number | null, b: number | null, threshold = 8): boolean {
+  if (a === null || b === null) return a !== b
+  return Math.abs(((b - a + 540) % 360) - 180) > threshold
+}
+
+/**
+ * 俯视（鸟瞰）卡车 SVG + 车牌标注。
+ *
+ * SVG 默认朝向：车头指向正北（↑），headingDeg = 0 → 不旋转，90 → 向东，以此类推。
+ * 旋转量 = headingDeg（无需 -90 偏移），绕俯视图车身中心旋转，任何角度都视觉自然。
+ *
+ * 布局：车牌绝对定位在图标上方（不参与流式排版），marker anchor='center'
+ * 使车身几何中心精确落在 GPS 坐标点。
+ */
+function makeTruckContent(pos: VehiclePosition, headingDeg: number | null): string {
   const color = STATE_COLORS[pos.work_state] ?? '#8c8c8c'
   const plate = pos.license_plate ?? `D${pos.device_id}`
+  const rot = headingDeg !== null ? `transform:rotate(${headingDeg.toFixed(1)}deg);` : ''
+
+  // 俯视卡车：车头（前风挡）在上（北），车尾在下，viewBox 24×34
+  // 结构：车身矩形 + 前鼻尖 + 前风挡 + 四个车轮 + 厢货分隔线
+  const svg = [
+    `<svg width="24" height="34" viewBox="0 0 24 34" fill="none" xmlns="http://www.w3.org/2000/svg">`,
+    // 车身主体
+    `<rect x="3" y="4" width="18" height="28" rx="3" fill="${color}"/>`,
+    // 前鼻尖（三角，指向北）
+    `<path d="M 3 8 L 12 0 L 21 8 Z" fill="${color}"/>`,
+    // 前风挡玻璃（浅蓝半透明）
+    `<rect x="5" y="4" width="14" height="9" rx="1.5" fill="rgba(190,230,255,0.80)"/>`,
+    // 驾驶室与货厢分隔线
+    `<line x1="5" y1="15" x2="19" y2="15" stroke="rgba(0,0,0,0.18)" stroke-width="1.2"/>`,
+    // 前轮（左 + 右）
+    `<rect x="0" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
+    `<rect x="20" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
+    // 后轮（左 + 右）
+    `<rect x="0" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
+    `<rect x="20" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>`,
+    `</svg>`,
+  ].join('')
+
+  // 外层容器：position:relative，尺寸 = SVG 尺寸（24×34），用于 anchor:'center'
+  // 车牌绝对定位在容器上方，不影响锚点计算
   return [
-    `<div style="display:flex;flex-direction:column;align-items:center;cursor:pointer;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))">`,
-    `<div style="background:rgba(20,20,20,.75);color:#fff;font-size:11px;font-weight:700;`,
-    `padding:1px 6px;border-radius:3px;white-space:nowrap;margin-bottom:3px;letter-spacing:.5px">${plate}</div>`,
-    `<svg width="32" height="24" viewBox="0 0 32 24" fill="none" xmlns="http://www.w3.org/2000/svg">`,
-    `<rect x="1" y="7" width="18" height="13" rx="2" fill="${color}"/>`,
-    `<rect x="19" y="11" width="10" height="9" rx="1.5" fill="${color}"/>`,
-    `<rect x="20" y="12" width="5" height="5" rx="1" fill="rgba(255,255,255,.6)"/>`,
-    `<circle cx="7" cy="21" r="3" fill="#222"/><circle cx="7" cy="21" r="1.4" fill="#666"/>`,
-    `<circle cx="24" cy="21" r="3" fill="#222"/><circle cx="24" cy="21" r="1.4" fill="#666"/>`,
-    `<rect x="28" y="14" width="3" height="2" rx="1" fill="#ffe066"/>`,
-    `</svg></div>`,
+    `<div style="position:relative;width:24px;height:34px;cursor:pointer;`,
+    `filter:drop-shadow(0 2px 5px rgba(0,0,0,.40))">`,
+    // 车牌浮动在图标正上方
+    `<div style="position:absolute;bottom:calc(100% + 4px);left:50%;`,
+    `transform:translateX(-50%);`,
+    `background:rgba(15,15,15,.80);color:#fff;font-size:11px;font-weight:700;`,
+    `padding:1px 7px;border-radius:3px;white-space:nowrap;letter-spacing:.5px;`,
+    `pointer-events:none">${plate}</div>`,
+    // 俯视卡车（旋转）
+    `<div style="${rot}width:24px;height:34px;transform-origin:center center">`,
+    svg,
+    `</div>`,
+    `</div>`,
   ].join('')
 }
 
@@ -152,6 +262,9 @@ function _flushUpdates() {
       trailPolylines.set(key, pl)
     }
 
+    // ── 方向计算 ──
+    const heading = _computeHeading(trail)
+
     // ── Marker ──
     const marker = markerMap.get(key) as {
       setPosition(p: [number, number]): void
@@ -160,16 +273,19 @@ function _flushUpdates() {
 
     if (marker) {
       marker.setPosition(lngLat)
-      // setContent() 昂贵（重建 DOM），只在作业状态变化时才调用
-      if (markerWorkState.get(key) !== pos.work_state) {
-        marker.setContent(makeTruckContent(pos))
+      // setContent() 昂贵（重建 DOM），只在作业状态或行驶方向变化时才调用
+      const stateChanged = markerWorkState.get(key) !== pos.work_state
+      const hdgChanged = _headingChanged(markerHeading.get(key) ?? null, heading)
+      if (stateChanged || hdgChanged) {
+        marker.setContent(makeTruckContent(pos, heading))
         markerWorkState.set(key, pos.work_state)
+        markerHeading.set(key, heading)
       }
     } else {
       const m = new window.AMap.Marker({
         position: lngLat,
-        content: makeTruckContent(pos),
-        anchor: 'bottom-center',
+        content: makeTruckContent(pos, heading),
+        anchor: 'center',
         map: map.value,
       })
       ;(m as { on(e: string, fn: () => void): void }).on('click', () => {
@@ -178,6 +294,7 @@ function _flushUpdates() {
       })
       markerMap.set(key, m)
       markerWorkState.set(key, pos.work_state)
+      markerHeading.set(key, heading)
     }
   }
   _pendingUpdates.clear()
@@ -229,13 +346,21 @@ const stateStats = computed(() => {
 
 onMounted(async () => {
   await nextTick()
-  initMap()
+  // 从后端读取地图默认中心点，成功则覆盖初始值
+  try {
+    const cfg = await get<{ map_center_lng: number; map_center_lat: number }>('/admin/map-config')
+    mapCenter.value = [cfg.map_center_lng, cfg.map_center_lat]
+  } catch {
+    // 读取失败保留硬编码默认值
+  }
+  initMap(mapCenter.value)
 })
 
 onUnmounted(() => {
   _rafPending = false
   _pendingUpdates.clear()
   markerWorkState.clear()
+  markerHeading.clear()
   trailPoints.clear()
   trailPolylines.clear()
   markerMap.clear()
@@ -304,6 +429,21 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <!-- 围栏叠加开关 -->
+        <div class="fence-toggle">
+          <button
+            class="layer-btn"
+            :class="{ active: geoZoneOverlayOn }"
+            :disabled="geoZoneLoading"
+            @click="toggleGeoZoneOverlay"
+          >
+            <span class="layer-icon">🔲</span>
+            <span v-if="!isMobile" class="layer-label">
+              {{ geoZoneLoading ? '加载…' : (geoZoneOverlayOn ? '隐藏围栏' : '显示围栏') }}
+            </span>
+          </button>
+        </div>
+
         <!-- 图例：桌面纵向列表；手机为两列网格，图标 + 状态标签并列便于辨认 -->
         <div class="map-legend" :class="{ 'map-legend--mobile': isMobile }">
           <div class="legend-title">图例</div>
@@ -312,11 +452,15 @@ onUnmounted(() => {
             :key="state"
             class="legend-item"
           >
-            <svg width="16" height="12" viewBox="0 0 32 24" fill="none" aria-hidden="true">
-              <rect x="1" y="7" width="18" height="13" rx="2" :fill="color"/>
-              <rect x="19" y="11" width="10" height="9" rx="1.5" :fill="color"/>
-              <circle cx="7" cy="21" r="3" fill="#222"/>
-              <circle cx="24" cy="21" r="3" fill="#222"/>
+            <!-- 图例：缩略俯视卡车 (12×17 px) -->
+            <svg width="12" height="17" viewBox="0 0 24 34" fill="none" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="28" rx="3" :fill="color"/>
+              <path d="M 3 8 L 12 0 L 21 8 Z" :fill="color"/>
+              <rect x="5" y="4" width="14" height="9" rx="1.5" fill="rgba(190,230,255,0.80)"/>
+              <rect x="0" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>
+              <rect x="20" y="5" width="4" height="8" rx="1.5" fill="#2c2c2c"/>
+              <rect x="0" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>
+              <rect x="20" y="21" width="4" height="8" rx="1.5" fill="#2c2c2c"/>
             </svg>
             <VehicleStatusTag :state="(state as WorkState)" />
           </div>
@@ -540,6 +684,13 @@ onUnmounted(() => {
   right: 12px;
   display: flex;
   gap: 6px;
+  z-index: 100;
+}
+
+.fence-toggle {
+  position: absolute;
+  top: 12px;
+  left: 12px;
   z-index: 100;
 }
 

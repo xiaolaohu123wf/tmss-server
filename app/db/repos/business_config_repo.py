@@ -15,7 +15,10 @@ UPDATE_BUSINESS_CONFIG_SQL = """
         unloading_dwell_min = $4,
         alert_cooldown_s = $5,
         hb_timeout_s = $6,
-        weather_city = $7
+        weather_city = $7,
+        map_center_lng = $8,
+        map_center_lat = $9,
+        transport_timeout_min = $10
     WHERE id = 1
 """
 
@@ -29,6 +32,9 @@ class BusinessConfigRow:
     alert_cooldown_s: int
     hb_timeout_s: int
     weather_city: str
+    map_center_lng: float
+    map_center_lat: float
+    transport_timeout_min: int
 
 
 def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[name-defined]
@@ -40,6 +46,9 @@ def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[na
         alert_cooldown_s=int(r["alert_cooldown_s"]),
         hb_timeout_s=int(r["hb_timeout_s"]),
         weather_city=str(r["weather_city"]),
+        map_center_lng=float(r["map_center_lng"]),
+        map_center_lat=float(r["map_center_lat"]),
+        transport_timeout_min=int(r["transport_timeout_min"]),
     )
 
 
@@ -63,6 +72,9 @@ class BusinessConfigRepo:
         alert_cooldown_s: int,
         hb_timeout_s: int,
         weather_city: str,
+        map_center_lng: float,
+        map_center_lat: float,
+        transport_timeout_min: int,
     ) -> None:
         await conn.execute(
             UPDATE_BUSINESS_CONFIG_SQL,
@@ -73,4 +85,7 @@ class BusinessConfigRepo:
             alert_cooldown_s,
             hb_timeout_s,
             weather_city.strip() or "Nanjing",
+            map_center_lng,
+            map_center_lat,
+            transport_timeout_min,
         )

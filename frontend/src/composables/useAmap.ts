@@ -62,7 +62,7 @@ export interface AMapPolygon {
   hide(): void
 }
 
-interface AMapPolyline {
+export interface AMapPolyline {
   setPath(path: [number, number][]): void
   setMap(map: AMapInstance | null): void
 }
@@ -79,16 +79,19 @@ export function useAmap(containerId: string, options?: Record<string, unknown>) 
   const isReady = ref(false)
   let activeTool: AMapMouseTool | null = null
 
-  function init() {
+  function init(centerOverride?: [number, number]) {
     if (!window.AMap) {
       console.error('[useAmap] AMap script not loaded')
       return
     }
+    const overrides: Record<string, unknown> = {}
+    if (centerOverride) overrides.center = centerOverride
     map.value = new AMap.Map(containerId, {
       zoom: 13,
       center: [116.397428, 39.90923],
       mapStyle: 'amap://styles/normal',
       ...options,
+      ...overrides,
     })
     isReady.value = true
   }

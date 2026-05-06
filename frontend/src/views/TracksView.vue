@@ -5,11 +5,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { useAmap } from '@/composables/useAmap'
+import type { AMapPolygon } from '@/composables/useAmap'
 import { formatChinaDateTime } from '@/utils/datetime'
 import { tracksApi, type TrackSegment, type TrackPoint } from '@/api/tracks'
 import { vehiclesApi } from '@/api/vehicles'
+import { geoZonesApi } from '@/api/geoZones'
 import { useAuthStore } from '@/stores/auth'
-import type { Vehicle } from '@/types'
+import { get } from '@/api/index'
+import type { Vehicle, Coordinate } from '@/types'
 
 dayjs.extend(utc)
 
@@ -46,6 +49,9 @@ const dateRange = ref<[string, string]>([
   dayjs().endOf('day').format('YYYY-MM-DD HH:mm:ss'),
 ])
 
+/** 过滤距离 < 0.1km 的驻留段（车辆停留未熄火）；默认开启 */
+const hideStationary = ref(true)
+
 const selectedId = ref<number | null>(null)
 /** 大量轨迹点不做深度响应式，减轻播放/滑块时的 Vue 开销 */
 const points = shallowRef<TrackPoint[]>([])
@@ -62,13 +68,45 @@ const playbackMetaSpeed = ref('—')
 const TRACK_REVEAL_MS = 300
 const trackStageRevealed = ref(true)
 
-const { map, init, createPolyline, createMarker } = useAmap('tracks-map', {
+const { map, init, createPolyline, createMarker, createPolygon } = useAmap('tracks-map', {
   zoom: 13,
   center: [109.4753, 30.2832],
 })
 
-let polyline: ReturnType<typeof createPolyline> | null = null
+let _mapCenterFromConfig: [number, number] | undefined
+
+let polylines: ReturnType<typeof createPolyline>[] = []
 let playMarker: ReturnType<typeof createMarker> | null = null
+
+// ── 围栏叠加层 ────────────────────────────────────────────────────────────────
+const ZONE_COLORS: Record<string, string> = {
+  loading:       '#52c41a',
+  unloading:     '#fa8c16',
+  restricted:    '#f5222d',
+  sharp_curve:   '#1890ff',
+  single_bridge: '#595959',
+  speed_zone:    '#722ed1',
+}
+let zonePolygons: AMapPolygon[] = []
+
+function _clearZonePolygons() {
+  for (const p of zonePolygons) { try { p.setMap(null) } catch { /* ignore */ } }
+  zonePolygons = []
+}
+
+async function loadZoneOverlay() {
+  _clearZonePolygons()
+  try {
+    const zones = await geoZonesApi.list()
+    for (const zone of zones.filter((z) => z.is_enabled)) {
+      const color = ZONE_COLORS[zone.zone_type] ?? '#1890ff'
+      const poly = createPolygon(zone.coordinates as Coordinate[], zone, color, 0.13)
+      zonePolygons.push(poly)
+    }
+  } catch {
+    /* 围栏加载失败不影响主功能 */
+  }
+}
 let geocoder: {
   getAddress: (
     lnglat: [number, number],
@@ -129,6 +167,39 @@ async function enrichRowPlaces(r: TrackSegment): Promise<TrackRow> {
 /** 地图折线抽稀：保持首尾与均匀采样，减少高德基线顶点数 */
 const MAX_POLYLINE_VERTICES = 480
 
+/** 跳变过滤阈值：相邻两点距离超过此值（米）则断线，不参与连线 */
+const MAX_JUMP_M = 100
+
+/** Haversine 球面距离（米），GCJ-02 / WGS-84 均可，误差亚米级 */
+function distanceM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+/** 将轨迹按跳变阈值切分为连续子段，每段内相邻点距离均 ≤ maxJumpM */
+function splitByJump(pts: TrackPoint[], maxJumpM: number): TrackPoint[][] {
+  if (!pts.length) return []
+  const segments: TrackPoint[][] = []
+  let cur: TrackPoint[] = [pts[0]]
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1]
+    const curr = pts[i]
+    if (distanceM(prev.lat, prev.lng, curr.lat, curr.lng) > maxJumpM) {
+      if (cur.length > 1) segments.push(cur)
+      cur = [curr]
+    } else {
+      cur.push(curr)
+    }
+  }
+  if (cur.length > 1) segments.push(cur)
+  return segments
+}
+
 function lngLatPathForMap(pts: TrackPoint[]): [number, number][] {
   if (pts.length <= MAX_POLYLINE_VERTICES) {
     return pts.map((p) => [Number(p.lng), Number(p.lat)])
@@ -171,6 +242,7 @@ async function fetchList() {
       to: dayjs(dateRange.value[1]).utc().format(),
       vehicle_id: vehicleFilter.value,
       limit: 200,
+      min_distance_km: hideStationary.value ? 0.3 : 0,
     })
     await loadGeocoder().catch(() => {})
     selectedId.value = null
@@ -194,8 +266,8 @@ async function fetchList() {
 }
 
 function clearTrackOverlays() {
-  polyline?.setMap(null)
-  polyline = null
+  for (const pl of polylines) pl.setMap(null)
+  polylines = []
   playMarker?.setMap(null)
   playMarker = null
   playbackMetaTime.value = ''
@@ -279,24 +351,31 @@ function drawTrack() {
     return
   }
   clearTrackOverlays()
-  const path = lngLatPathForMap(points.value)
-  polyline = createPolyline(path, '#1890ff', 5)
+
+  // 按跳变阈值切分为若干连续子段，每段独立绘线
+  const segments = splitByJump(points.value, MAX_JUMP_M)
+  for (const seg of segments) {
+    polylines.push(createPolyline(lngLatPathForMap(seg), '#1890ff', 5))
+  }
+
   const p0 = points.value[0]
-  playMarker = createMarker(
-    [p0.lng, p0.lat],
-    undefined,
-    undefined,
-  )
+  playMarker = createMarker([p0.lng, p0.lat], undefined, undefined)
   playMarker.setLabel({
     content: '<span style="font-size:12px;font-weight:600">▶</span>',
     direction: 'top',
   })
-  const pl = polyline
+
+  const pls = [...polylines]
   const mk = playMarker
   requestAnimationFrame(() => {
-    if (map.value && pl && mk) {
+    if (map.value && pls.length && mk) {
       // 第二参数 true：立即适配视野，禁用高德默认的飞入动画（否则常持续 1～3s）
-      map.value.setFitView?.([pl as unknown as object, mk as unknown as object], true, null, 18)
+      map.value.setFitView?.(
+        [...pls, mk] as unknown as object[],
+        true,
+        null,
+        18,
+      )
     }
   })
   updateMarkerPos()
@@ -384,10 +463,14 @@ function syncTracksBreakpoint() {
   isMobile.value = window.innerWidth <= 768
 }
 
+// 工具栏保留高度：筛选行(~40px) + margin-bottom(12px) = ~52px；手机端另算
 const TOOLBAR_RESERVE_PX = 118
 
 const tracksTableHeight = computed(() => {
-  if (!isMobile.value) return 'calc(100vh - 220px)'
+  if (!isMobile.value) {
+    // noPadding 后：header(56) + tabbar(36) + aside padding(16×2) + toolbar(52) + 表头(~40) ≈ 216px
+    return 'calc(100vh - 216px)'
+  }
   const h = viewport.value.h
   const mapBlock = Math.min(Math.round(h * 0.42), 320)
   return Math.max(200, Math.floor(h - 56 - mapBlock - TOOLBAR_RESERVE_PX))
@@ -400,14 +483,22 @@ onMounted(async () => {
   } catch {
     /* 无权限时列表可为空 */
   }
+  try {
+    const cfg = await get<{ map_center_lng: number; map_center_lat: number }>('/admin/map-config')
+    _mapCenterFromConfig = [cfg.map_center_lng, cfg.map_center_lat]
+  } catch {
+    /* 读取失败保留 options 中的默认值 */
+  }
   await nextTick()
-  init()
+  init(_mapCenterFromConfig)
+  void loadZoneOverlay()
   await fetchList()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', syncTracksBreakpoint)
   stopPlayTimer()
+  _clearZonePolygons()
 })
 </script>
 
@@ -440,6 +531,7 @@ onUnmounted(() => {
             />
           </el-select>
           <el-button type="primary" :loading="loading" @click="fetchList">查询</el-button>
+          <el-checkbox v-model="hideStationary" label="隐藏驻留段" @change="fetchList" />
         </div>
 
         <el-table
@@ -468,7 +560,21 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column label="距离(km)" width="88" align="right">
             <template #default="{ row }">
-              {{ row.distance_km.toFixed(2) }}
+              <div class="cell-stack" style="align-items:flex-end">
+                <span>{{ row.distance_km.toFixed(2) }}</span>
+                <el-tag
+                  v-if="row.segment_type === 'loading'"
+                  type="success"
+                  size="small"
+                  effect="light"
+                >装料</el-tag>
+                <el-tag
+                  v-else-if="row.segment_type === 'unloading'"
+                  type="warning"
+                  size="small"
+                  effect="light"
+                >卸料</el-tag>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="起点" min-width="120" show-overflow-tooltip>
@@ -476,9 +582,6 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column label="终点" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ row.end_place }}</template>
-          </el-table-column>
-          <el-table-column prop="cargo_name" label="货品" width="72">
-            <template #default>—</template>
           </el-table-column>
           <el-table-column v-if="authStore.isManager" label="操作" width="72" fixed="right" align="center">
             <template #default="{ row }">
@@ -556,14 +659,16 @@ onUnmounted(() => {
 
 <style scoped>
 .tracks-page {
-  height: 100%;
+  /* noPadding 模式：layout-main 无 padding，页面自行撑满 */
+  height: calc(100vh - 92px);  /* header(56) + tabbar(36) */
   min-height: 520px;
+  overflow: hidden;
 }
 .tracks-wrap {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  height: calc(100vh - 120px);
+  height: 100%;
   min-height: 480px;
   overflow: hidden;
 }
@@ -574,7 +679,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-right: 12px;
+  padding: 16px 12px 16px 16px;   /* 上下左各 16px，右侧留给分隔线 */
   border-right: 1px solid #e8e8e8;
   background: #fff;
 }
@@ -583,13 +688,16 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
 .tracks-main {
   position: relative;
-  padding: 0 !important;
+  padding: 0;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 .tracks-stage {
   position: relative;
@@ -652,11 +760,11 @@ onUnmounted(() => {
 /* ── 手机：上地图 + 回放条，下列表筛选（DOM 仍为 aside→main，用 column-reverse 视觉翻转）── */
 @media (max-width: 768px) {
   .tracks-page {
+    height: calc(100dvh - 56px);  /* 手机无 tabbar，仅减去顶栏 */
     min-height: 0;
   }
   .tracks-wrap {
     flex-direction: column-reverse;
-    height: calc(100dvh - 56px);
     min-height: 0;
   }
   .tracks-aside {
