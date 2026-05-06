@@ -33,6 +33,8 @@
 阶段 10 大屏           ██████████  ✅ 完成    高德地图 + SSE + 实时大屏
 阶段 11 历史轨迹查询   ██████████  ✅ 完成    轨迹回放 + GCJ-02 转换 + 管理员删除
 阶段 12 系统完善       ██████████  ✅ 完成    家用车型 / ICCID 补全 / UI 科技化
+阶段 13 作业识别增强   ██████████  ✅ 完成    装/卸料标注 + 历史重分割 + 大屏方向 + 围栏叠加
+阶段 14 轨迹分段重构   ░░░░░░░░░░  🚧 待开发  六类型精确分段 + 段点解耦 + idle 隐藏段
 ```
 
 > **关键依赖链**：阶段 1 → 2 → 3 → 4（并行启动 5）→ 6 → 7 → 8 → 9 → 10 → 11 → 12
@@ -428,6 +430,58 @@ pytest tests/tcp/test_gps_handler.py -v
 
 ---
 
+---
+
+## 阶段 13：作业识别增强与大屏优化 ✅
+
+**目标**：实现精准装/卸料轨迹标注、大屏车辆方向指示、历史轨迹重分析工具、系统全面更名。
+
+### 任务清单
+
+**数据库迁移**
+- [x] `V004__add_map_center.py` — `business_config` 增加 `map_center_lng`、`map_center_lat`（地图默认中心）
+- [x] `V005__add_segment_type.py` — `track_segment` 增加 `segment_type VARCHAR(20)`（`loading`/`unloading`/`NULL`）
+- [x] `V006__add_transport_timeout.py` — `business_config` 增加 `transport_timeout_min INT`（运输超时阈值）
+- [x] `start.sh` 启动时自动执行 `alembic upgrade head`，无需手动迁移
+
+**作业状态机增强（后端）**
+- [x] `work_state_service.py`：运输超时检测（`transport_timeout_min` 后状态置 `UNKNOWN`）；进出围栏时调用 `switch_segment_type` 创建带类型的新段
+- [x] `track_segment_service.py`：新增 `switch_segment_type()`；装/卸料段内 `suppress_stationary_split=True` 阻止段内二次切割
+- [x] `device_registry.py`：`DeviceState` 增加 `current_segment_type`、`transport_started_at` 字段
+- [x] `gps_handler.py`：透传 `transport_timeout_min` + `in_work_zone` 标志给相关服务
+
+**历史轨迹重分析（后端）**
+- [x] `POST /api/admin/reanalyze-segments?days=N` — 轻量标注：仅更新已有段 `segment_type`，需满足围栏内且时长 ≥ 驻留阈值
+- [x] `POST /api/admin/resegment-history?days=N` — 全量重分割：从原始定位点重建段（围栏边界 + 时间间隔双切割），含自动标注
+
+**轨迹查询优化（后端 + 前端）**
+- [x] `router_track_segments.py`：`min_distance_km` 过滤参数（默认 0.3 km）；`segment_type` 段绕过距离过滤
+- [x] `TracksView.vue`：装/卸料徽章显示；驻留段隐藏开关（0.3 km 阈值）；跳变断线（> 100 m）；围栏常驻叠加层
+
+**大屏增强**
+- [x] `DashboardView.vue`：围栏叠加开关（左上角）；俯视卡车 SVG + 方向旋转（基于 trail 方位角）；图例同步更新
+
+**围栏管理**
+- [x] `GeoZonesView.vue`：图层切换（默认卫星+路网）；近 24h 轨迹叠加开关
+
+**系统设置**
+- [x] `SettingsView.vue`：三级优先级阈值说明（围栏 > 时间 > 距离）；地图默认中心点配置；运输超时阈值；历史重分析工具（双操作）
+
+**系统更名**
+- [x] 前端标题、浏览器 `<title>`、侧边栏、移动端标题均更名为"**姚家平车辆智能监管平台**"
+
+### 验收标准
+
+```bash
+# ✅ 车辆进入取土围栏并停留 ≥ 阈值 → 当前轨迹段 segment_type='loading'
+# ✅ 主界面"显示围栏"开关 → 正确叠加各类型围栏多边形
+# ✅ 主界面卡车图标随行驶方向旋转（俯视视角，任意方向均自然）
+# ✅ 系统设置执行"全量重建" → 围栏边界处轨迹正确断开
+# ✅ 轨迹查询页装/卸料段显示标签，隐藏驻留段不影响装/卸料段
+```
+
+---
+
 ## 开放性决策点
 
 以下问题在开发前需要团队确认，避免返工：
@@ -459,3 +513,96 @@ pytest tests/tcp/test_gps_handler.py -v
 | 10 大屏 | `frontend/views/DashboardView.vue` | 实时地图 + 告警弹窗 ✅ |
 | 11 轨迹查询 | `router_track_segments.py` `track_query_repo.py` `TracksView.vue` | 轨迹回放 + 折线与路网对齐 ✅ |
 | 12 系统完善 | `tcp_packets.py` `full_state_handler.py` `LoginView.vue` 等 | 家用车型/ICCID 补全/UI 重设计 ✅ |
+| 13 作业识别增强 | `work_state_service.py` `track_segment_service.py` `router_admin.py` `DashboardView.vue` `TracksView.vue` | 装/卸料标注 + 大屏方向 + 历史重分割 ✅ |
+
+---
+
+## 阶段 14：轨迹分段精度重构 🚧
+
+**目标**：完全重写轨迹分段逻辑，实现六类型精确分段，原始定位数据不变，段与点解耦，idle 停车段自动隐藏。
+
+> 设计规范详见 `ARCHITECTURE.md §附录E`，数据库变更详见 `DATABASE.md §V007`。
+> **依赖**：阶段 6（业务逻辑）+ 阶段 11（轨迹查询）
+
+### 任务清单
+
+**数据库迁移（Alembic V007）**
+- [ ] `V007__segment_v2.py` — 以下变更全部在一次迁移中完成：
+  - `work_state_t` 枚举新增 `idle` 值
+  - `location_point` 删除 `segment_id` 列，删除 `idx_lp_segment` 索引
+  - `business_config` 字段重命名：`loading_dwell_min` → `loading_dwell_s`（值×60），`unloading_dwell_min` → `unloading_dwell_s`（值×60）
+  - `business_config` 新增 `segment_buffer_min SMALLINT NOT NULL DEFAULT 3`
+
+**枚举与配置（后端）**
+- [ ] `app/core/enums.py` — `WorkState` 新增 `IDLE = "idle"`
+- [ ] `app/db/repos/business_config_repo.py` — 字段名更新（`loading_dwell_s` / `unloading_dwell_s` / `segment_buffer_min`）
+- [ ] `app/db/queries/business_config.py` — SQL 常量同步更新
+
+**DeviceState 字段补全**
+- [ ] `app/core/device_registry.py` — `DeviceState` 新增 `last_point_lat`、`last_point_lng` 字段；`update_binding` 同步重置新字段
+
+**核心服务重写**
+- [ ] `app/services/track_segment_service.py` — 完全重写：
+  - 删除旧的三级规则（时间间隔 + 驻留 + 距离过滤）
+  - 实现新状态机（见 `ARCHITECTURE.md §E.4`）：`unknown` → `loading/unloading`（回溯 `zone_entry_at`）→ `transport_loaded/empty` → `unknown`/`idle`
+  - 停车检测：100m 半径 + `park_threshold_min` 分钟（`stationary_since` 回溯）
+  - 新增 `process_gps_point(state, lat, lng, recorded_at, zones_at_point, cfg, conn)` 统一入口
+  - 旧的 `get_or_advance_segment()` 和 `switch_segment_type()` 对外接口废弃
+- [ ] `app/services/work_state_service.py` — 重构：作业状态推导逻辑内聚到 `track_segment_service`；`work_session` 记录保持不变
+- [ ] `app/services/segment_sweeper.py` — 更新 SQL：不再按 `segment_id` 查最后一个点，改为按 `vehicle_id + recorded_at BETWEEN started_at AND NOW()` 查询
+
+**数据访问层更新**
+- [ ] `app/db/repos/location_repo.py` — `insert_batch` 的 COPY 列表删除 `segment_id` 列
+- [ ] `app/db/repos/track_segment_repo.py` — 新增 `update_segment_type(conn, segment_id, new_type)` 方法（供运输超时 relabel）
+- [ ] `app/db/repos/track_query_repo.py` — 全面重写：
+  - `get_points(segment_id)` → `get_points(vehicle_id, started_at, ended_at, segment_type, buffer_min)` 
+  - transport 类型段自动扩展 `±buffer_min` 时间范围
+  - `unknown` / `idle` 类型段启用 TABLESAMPLE 降采样（≤25000 点）
+- [ ] `app/db/queries/track_segment.py` — 更新 SQL 常量，新增按时间范围查点的 SQL
+
+**GPS Handler 更新**
+- [ ] `app/tcp/handlers/gps_handler.py` — 调用新的 `track_segment_service.process_gps_point()` 替换旧接口
+
+**HTTP API 更新**
+- [ ] `app/http/routers/router_track_segments.py` — `GET /api/track-segments/{id}/points` 更新为新查询接口；新增 `include_idle` 查询参数（默认 `false`，`true` 时返回 idle 段）
+- [ ] `app/http/routers/router_admin.py` — `POST /api/admin/resegment-history` 重写重分析算法（删除重建，共享状态机核心逻辑）
+
+**历史重分析算法（共享批处理版状态机）**
+- [ ] `app/services/segment_resegment_service.py`（新建）— 批处理版状态机，与实时版共享核心 `process_gps_point` 函数
+
+**前端更新**
+- [ ] `frontend/src/views/SettingsView.vue` — 更新驻留阈值输入框单位为"秒"，字段名 `loading_dwell_s` / `unloading_dwell_s`；新增 `segment_buffer_min` 配置项
+- [ ] `frontend/src/views/TracksView.vue` — 
+  - 新增段类型徽章（`transport_loaded` 红、`transport_empty` 蓝、`unknown` 灰、`idle` 浅灰）
+  - 新增"显示停车记录"开关（勾选后展示 `idle` 段）
+  - transport 段轨迹渲染：前 3min 灰色 → 主色 → 后 3min 灰色（三段 Polyline）
+  - `idle` 段展开时跳过逆地理编码，仅显示坐标；点击后懒加载地址
+- [ ] `frontend/src/views/DashboardView.vue` — 新增 `idle` 状态车辆颜色（浅灰 `#d9d9d9`）；更新图例
+- [ ] `frontend/src/views/GeoZonesView.vue` — 新增围栏重叠检测：装料区与卸料区绘制时检查交叉，提示警告
+
+### 验收标准
+
+```bash
+# ✅ 车辆进入取土围栏，停留 ≥ loading_dwell_s 秒后离开
+#    → DB: loading 段 started_at = zone_entry_at（回溯正确）
+#    → DB: transport_loaded 段随即开启
+
+# ✅ 运输超时（> transport_timeout_min）后继续行驶，直到停车
+#    → DB: transport_loaded 段类型原地改为 unknown
+#    → DB: 停车确认后 unknown 段关闭，idle 段开启
+
+# ✅ 历史全量重分析（POST /api/admin/resegment-history）
+#    → 旧段全部删除，从原始点重建，段类型与实时结果一致
+
+# ✅ 轨迹查询页"显示停车记录"开关
+#    → 关闭时 idle 段不在列表出现
+#    → 开启后 idle 段出现，展开时显示坐标（不触发逆地理编码）
+
+# ✅ 运输段轨迹展示
+#    → 地图上可见前 3min 灰色前缀折线 + 主色运输折线 + 后 3min 灰色后缀折线
+
+# ✅ 大屏上停车中的车辆
+#    → 长时停车（> park_threshold_min）后图标颜色变为浅灰 #d9d9d9
+
+# ✅ location_point 表无 segment_id 列，alembic upgrade head 无报错
+```

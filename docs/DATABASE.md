@@ -54,10 +54,12 @@ $$;
 
 ```sql
 CREATE TYPE loc_type_t     AS ENUM ('gps', 'lbs');
-CREATE TYPE work_state_t   AS ENUM ('loading', 'unloading', 'transport_loaded', 'transport_empty', 'unknown');
+CREATE TYPE work_state_t   AS ENUM ('loading', 'unloading', 'transport_loaded', 'transport_empty', 'unknown', 'idle');
 CREATE TYPE cmd_source_t   AS ENUM ('auto', 'manual');
 CREATE TYPE user_role_t    AS ENUM ('manager', 'fleet_captain', 'terminal');
 ```
+
+> **v1.2.0**：`work_state_t` 新增 `idle`（停车闲置，不在装/卸料区的长时停车），对应大屏浅灰色 `#d9d9d9`。
 
 ---
 
@@ -292,19 +294,31 @@ CREATE TRIGGER trg_operation_ban_updated_at
 CREATE TABLE business_config (
   id                  BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   global_speed_limit  SMALLINT    NOT NULL DEFAULT 80,   -- 全局限速(km/h)
-  park_threshold_min  SMALLINT    NOT NULL DEFAULT 10,   -- 停车切段阈值(分钟)
-  loading_dwell_min   SMALLINT    NOT NULL DEFAULT 5,    -- 装料最短驻留(分钟)
-  unloading_dwell_min SMALLINT    NOT NULL DEFAULT 5,    -- 卸料最短驻留(分钟)
+  park_threshold_min  SMALLINT    NOT NULL DEFAULT 10,   -- 停车/idle 判定阈值(分钟)；100m 半径内停留超此值 → idle
+  loading_dwell_s     INT         NOT NULL DEFAULT 300,  -- 装料最短驻留(秒)；≥ 此值确认为 loading（V007 由 loading_dwell_min 重命名，原值×60）
+  unloading_dwell_s   INT         NOT NULL DEFAULT 300,  -- 卸料最短驻留(秒)；≥ 此值确认为 unloading（V007 由 unloading_dwell_min 重命名，原值×60）
   alert_cooldown_s    SMALLINT    NOT NULL DEFAULT 10,   -- 告警防抖间隔(秒)
   hb_timeout_s        SMALLINT    NOT NULL DEFAULT 90,   -- 心跳超时判定(秒)
   weather_city        VARCHAR(50) NOT NULL DEFAULT 'Nanjing', -- 天气查询城市
   weather_cache_min   SMALLINT    NOT NULL DEFAULT 30,   -- 天气缓存时长(分钟)
+  map_center_lng      DOUBLE PRECISION NOT NULL DEFAULT 109.4753, -- 地图默认中心经度 GCJ-02
+  map_center_lat      DOUBLE PRECISION NOT NULL DEFAULT 30.2832,  -- 地图默认中心纬度 GCJ-02
+  transport_timeout_min INT        NOT NULL DEFAULT 30,  -- 运输超时阈值（分钟）；0=禁用；超时后段类型改为 unknown
+  segment_buffer_min  SMALLINT    NOT NULL DEFAULT 3,    -- 运输段展示缓冲（分钟）；查询时额外取 started_at-N 到 ended_at+N 的点（V007 新增）
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 初始化默认行
 INSERT INTO business_config DEFAULT VALUES;
+
+-- 迁移历史（Alembic）
+-- V004: ADD COLUMN map_center_lng, map_center_lat
+-- V005: ADD COLUMN segment_type ON track_segment
+-- V006: ADD COLUMN transport_timeout_min
+-- V007: loading_dwell_min→loading_dwell_s(×60), unloading_dwell_min→unloading_dwell_s(×60),
+--        ADD segment_buffer_min, work_state_t ADD VALUE 'idle',
+--        location_point DROP COLUMN segment_id, DROP INDEX idx_lp_segment
 
 CREATE TRIGGER trg_business_config_updated_at
   BEFORE UPDATE ON business_config
@@ -322,8 +336,9 @@ CREATE TABLE location_point (
   id          BIGINT         GENERATED ALWAYS AS IDENTITY,
   device_id   BIGINT         NOT NULL,               -- FK device.id
   vehicle_id  BIGINT,                                -- FK vehicle.id，绑定后写入
-  segment_id  BIGINT,                                -- FK track_segment.id，段确定后写入
-  recorded_at TIMESTAMPTZ    NOT NULL,               -- 定位时间
+  -- segment_id 列已在 V007 迁移中删除（v1.2.0）
+  -- 段的点集改由 (vehicle_id, recorded_at BETWEEN started_at AND ended_at) 时间范围查询
+  recorded_at TIMESTAMPTZ    NOT NULL,               -- 定位时间（设备端 GPS 时间戳）
   lat         NUMERIC(10,7)  NOT NULL,               -- 纬度 WGS-84
   lng         NUMERIC(10,7)  NOT NULL,               -- 经度 WGS-84
   speed       NUMERIC(6,2),                          -- 速度(km/h)
@@ -336,7 +351,7 @@ CREATE TABLE location_point (
 -- B-tree 复合索引（设备/车辆维度精确范围查询）
 CREATE INDEX idx_lp_device_time  ON location_point (device_id,  recorded_at);
 CREATE INDEX idx_lp_vehicle_time ON location_point (vehicle_id, recorded_at);
-CREATE INDEX idx_lp_segment      ON location_point (segment_id);
+-- idx_lp_segment 已在 V007 迁移中删除（随 segment_id 列一同移除）
 
 -- BRIN 索引：纯时间顺序扫描，体积约为 B-tree 的 1/1000
 CREATE INDEX idx_lp_time_brin ON location_point USING BRIN (recorded_at);
@@ -359,20 +374,39 @@ CREATE TABLE location_point_2025_02 PARTITION OF location_point
 
 ```sql
 CREATE TABLE track_segment (
-  id          BIGINT         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  device_id   BIGINT         NOT NULL,               -- FK device.id
-  vehicle_id  BIGINT,                                -- FK vehicle.id
-  started_at  TIMESTAMPTZ    NOT NULL,               -- 段开始时间
-  ended_at    TIMESTAMPTZ,                           -- 段结束时间，NULL=进行中
-  start_lat   NUMERIC(10,7),                         -- 起点纬度 WGS-84
-  start_lng   NUMERIC(10,7),                         -- 起点经度 WGS-84
-  end_lat     NUMERIC(10,7),                         -- 终点纬度 WGS-84
-  end_lng     NUMERIC(10,7),                         -- 终点经度 WGS-84
-  point_count INT            NOT NULL DEFAULT 0,     -- 段内定位点数
-  label       VARCHAR(100),
-  created_at  TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ    NOT NULL DEFAULT NOW()
+  id           BIGINT         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  device_id    BIGINT         NOT NULL,               -- FK device.id
+  vehicle_id   BIGINT,                                -- FK vehicle.id
+  started_at   TIMESTAMPTZ    NOT NULL,               -- 段开始时间（装/卸料段回溯至 zone_entry_at）
+  ended_at     TIMESTAMPTZ,                           -- 段结束时间，NULL=实时开放中
+  start_lat    NUMERIC(10,7),                         -- 起点纬度 WGS-84
+  start_lng    NUMERIC(10,7),                         -- 起点经度 WGS-84
+  end_lat      NUMERIC(10,7),                         -- 终点纬度 WGS-84
+  end_lng      NUMERIC(10,7),                         -- 终点经度 WGS-84
+  point_count  INT            NOT NULL DEFAULT 0,     -- 段内定位点数（时间范围内的总点数）
+  segment_type VARCHAR(20),                           -- 段类型，见下方说明
+  label        VARCHAR(100),
+  created_at   TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
+
+-- segment_type 取值说明（v1.2.0 扩展）：
+--   NULL              : 实时开放中尚未确认类型（transport 段确认前的过渡状态）
+--   'loading'         : 装料中；车辆在取土围栏内停留 ≥ loading_dwell_s 秒
+--   'unloading'       : 卸料中；车辆在弃土围栏内停留 ≥ unloading_dwell_s 秒
+--   'transport_loaded': 运料中；从装料区离开到进入卸料区（未超时）
+--   'transport_empty' : 空载中；从卸料区离开到进入装料区（未超时）
+--   'unknown'         : 未知轨迹；运输超时/无法分类的行驶段/连接初期
+--   'idle'            : 停车闲置；不在装/卸料区的长时停车（默认隐藏）
+--
+-- 查询段内定位点：
+--   SELECT * FROM location_point
+--   WHERE vehicle_id = $1 AND recorded_at BETWEEN started_at AND ended_at
+--
+-- 查询 transport 段定位点（含 3min 展示缓冲）：
+--   WHERE vehicle_id = $1
+--     AND recorded_at BETWEEN (started_at - segment_buffer_min * INTERVAL '1 min')
+--                         AND (ended_at   + segment_buffer_min * INTERVAL '1 min')
 
 CREATE INDEX idx_seg_device_start  ON track_segment (device_id,  started_at);
 CREATE INDEX idx_seg_vehicle_start ON track_segment (vehicle_id, started_at);
@@ -567,7 +601,7 @@ operation_ban                                 │
  └─ event.ban_id                              │
                                               │
 track_segment                                 │
- └─ location_point.segment_id                 │
+ └─ （v1.2.0 已移除 location_point.segment_id；段的点集通过时间范围查询推导）
                                               │
 event                                         │
  └─ command_log.event_id                      │
@@ -583,6 +617,10 @@ event                                         │
 | V002 | `V002__add_vehicle_driver_name.py` | `vehicle` 表新增 `driver_name VARCHAR(50)` |
 | V003 | `V003__command_log_speed.py` | `command_log` 表新增 `speed_kmh NUMERIC(8,2)` |
 
+| V004 | `V004__add_map_center.py` | `business_config` 新增 `map_center_lng`、`map_center_lat` |
+| V005 | `V005__add_segment_type.py` | `track_segment` 新增 `segment_type VARCHAR(20)` |
+| V006 | `V006__add_transport_timeout.py` | `business_config` 新增 `transport_timeout_min INT` |
+| V007 | `V007__segment_v2.py` | **轨迹分段重构 v1.2.0**：`location_point` 删除 `segment_id` 列及索引；`business_config` 字段 `loading_dwell_min`→`loading_dwell_s`（值×60）、`unloading_dwell_min`→`unloading_dwell_s`（值×60），新增 `segment_buffer_min SMALLINT DEFAULT 3`；`work_state_t` 枚举新增 `idle` |
 > 执行 `alembic upgrade head` 应用全部迁移。新增字段均使用 `IF NOT EXISTS`，可安全重复执行。
 
 ---

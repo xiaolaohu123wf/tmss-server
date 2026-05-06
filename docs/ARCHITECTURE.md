@@ -109,16 +109,42 @@ class AlertService:
 ```python
 @dataclass
 class DeviceState:
+    # ── 基础标识 ──────────────────────────────────────────────────────────────
     device_id: int
     imei: str
     vehicle_id: int | None
     fleet_id: int | None
+    license_plate: str | None
     writer: asyncio.StreamWriter           # TCP 写入句柄
     last_heartbeat_at: datetime
-    recent_points: deque[GpsPacket]        # 最近 300 点缓存（断线重连回放）
-    current_work_state: WorkState
-    active_zone_ids: set[int]              # 当前所在围栏集合（用于 zone_entry/exit 触发）
     connected_at: datetime
+    recent_points: deque[GpsPacket]        # 最近 300 点缓存（断线重连回放）
+
+    # ── 实时状态 ──────────────────────────────────────────────────────────────
+    current_work_state: WorkState          # 当前作业状态（用于大屏颜色）
+    active_zone_ids: set[int]              # 当前所在围栏集合
+
+    # ── 轨迹分段追踪 ──────────────────────────────────────────────────────────
+    current_segment_id: int | None         # 当前开放段 ID
+    current_segment_type: str | None       # 当前段类型（None/loading/unloading/...）
+    last_point_at: datetime | None         # 最后一个 GPS 包的 recorded_at
+    last_point_lat: float | None           # 最后一个已知点纬度（段终止坐标用）
+    last_point_lng: float | None           # 最后一个已知点经度（段终止坐标用）
+
+    # ── 停车驻留检测（100m 半径 + 10min 阈值）────────────────────────────────
+    stationary_anchor_lat: float | None    # 锚点纬度
+    stationary_anchor_lng: float | None    # 锚点经度
+    stationary_since: datetime | None      # 进入当前锚点的时刻（用于 idle 段 started_at）
+
+    # ── 作业状态机：围栏驻留计时 ──────────────────────────────────────────────
+    zone_entry_at: datetime | None         # 进入当前装/卸料围栏的时刻（段起始时间回溯用）
+    zone_entry_id: int | None              # 当前计时驻留的 zone_id
+
+    # ── 运输超时计时 ──────────────────────────────────────────────────────────
+    transport_started_at: datetime | None  # 进入 TRANSPORT_LOADED/EMPTY 状态时记录
+
+    # ── 并发安全 ──────────────────────────────────────────────────────────────
+    segment_lock: asyncio.Lock             # 防止短暂重连并发开段
 ```
 
 **对外 API**（仅允许通过这些方法访问）：
@@ -788,10 +814,10 @@ tmss-server/
 │   │
 │   ├── services/                     # Service 层（业务逻辑）
 │   │   ├── alert_service.py          # 超速/越界判定 + 防抖
-│   │   ├── geofence_service.py       # 点在多边形 + 坐标转换
-│   │   ├── work_state_service.py     # 作业状态机
+│   │   ├── geofence_service.py       # 点在多边形 + 坐标转换（wgs84_to_gcj02）
+│   │   ├── work_state_service.py     # 作业状态机（5 状态 + 运输超时检测）
 │   │   ├── command_service.py        # 指令下发
-│   │   ├── track_segment_service.py  # 轨迹分段（停车/掉线 ≥阈值 切段）
+│   │   ├── track_segment_service.py  # 轨迹分段（时间切段 + switch_segment_type）
 │   │   ├── segment_sweeper.py        # 后台轨迹段扫描（关闭开放段）
 │   │   ├── vehicle_service.py
 │   │   ├── geo_zone_service.py
@@ -849,6 +875,8 @@ tmss-server/
 │   │       ├── router_events.py
 │   │       ├── router_users.py
 │   │       ├── router_admin.py       # 系统配置（需二次验证）+ 车队管理
+│   │       │                         #   POST /api/admin/reanalyze-segments  轻量标注
+│   │       │                         #   POST /api/admin/resegment-history   全量重分割
 │   │       ├── router_fleets.py      # GET/PATCH /api/fleets/me（车队长自查/编辑）
 │   │       ├── router_track_segments.py  # 轨迹段 CRUD + GCJ-02 坐标转换
 │   │       ├── router_tcp_messages.py    # 调试：TCP 原始消息环形缓冲
@@ -872,7 +900,10 @@ tmss-server/
 │   ├── versions/
 │   │   ├── V001__init_schema.py
 │   │   ├── V002__add_vehicle_driver_name.py
-│   │   └── V003__command_log_speed.py
+│   │   ├── V003__command_log_speed.py
+│   │   ├── V004__add_map_center.py           # business_config: map_center_lng/lat
+│   │   ├── V005__add_segment_type.py         # track_segment: segment_type
+│   │   └── V006__add_transport_timeout.py    # business_config: transport_timeout_min
 │   ├── env.py
 │   └── alembic.ini
 │
@@ -1004,6 +1035,18 @@ repos:
 | 路由层调用 `wgs84_to_gcj02` | `router_track_segments.py` | 展示层坐标适配，逻辑简单（纯数学），无 I/O，可接受 |
 | `full_state_handler` 直接更新 DB | `tcp/handlers/full_state_handler.py` | ICCID 补全为单次幂等 SQL，未抽 Service，因逻辑简单未引入额外层 |
 | `track_query_repo` 含 TABLESAMPLE | `db/repos/track_query_repo.py` | 定位点最多 25000 条降采样为 SQL 特性，在 Repo 层实现符合规范 |
+| `segment_sweeper` 内联 SQL | `services/segment_sweeper.py` | 后台巡逻任务含 `LEFT JOIN LATERAL`，独立于 Repo 层；逻辑内聚，不引入额外 Repo 方法 |
+
+### 轨迹分段架构偏差历史记录
+
+> **v1.2.0 起，P1–P4 及附加精度问题已由「轨迹分段重构」统一解决，详见 §附录E 与 DEVPLAN.md §阶段14。**
+
+| 偏差 | 原位置 | 修复方式 |
+|------|--------|---------|
+| P1：装/卸料段起始时间偏晚 | `work_state_service._transition()` | v1.2.0 重构：`started_at` 回溯到 `zone_entry_at` |
+| P2：段终止坐标取自新包 | `track_segment_service` | v1.2.0 重构：使用 `DeviceState.last_point_lat/lng` |
+| P3：驻留检测抗抖动不足（10m 半径）| `track_segment_service` | v1.2.0 重构：改为 100m 半径 + 10min 阈值 |
+| P4：重启后工作状态未恢复 | `DeviceRegistry` 恢复路径 | v1.2.0 重构：从 `segment_type` 推断状态 |
 
 ---
 
@@ -1012,3 +1055,167 @@ repos:
 - 本文档随后端代码一起演进，重大架构调整需更新本文档并在 PR 中明确标注 `[ARCH]` 前缀
 - 新成员入职第一周必须通读本文档
 - 季度回顾：检查实际代码与本规范的偏差，统一修正
+
+---
+
+## 附录 E：轨迹分段重构设计规范（v1.2.0）
+
+> **版本**：v1.2.0（2026-05-07 设计定稿）  
+> **状态**：待实现，见 DEVPLAN.md §阶段14  
+> **影响范围**：`track_segment_service`、`work_state_service`、`location_repo`、`track_query_repo`、`segment_sweeper`、`DeviceState`、`business_config`、前端 `TracksView`、`SettingsView`、`DashboardView`
+
+---
+
+### E.1 设计原则
+
+1. **原始定位数据不可修改**：`location_point` 表中的 GPS 字段（lat/lng/speed/altitude/recorded_at）在任何情况下不得更新或删除（管理员删除轨迹段时级联硬删除为唯一例外）。
+2. **段与点解耦**：删除 `location_point.segment_id` 外键列，段的点集通过 `(vehicle_id, recorded_at BETWEEN started_at AND ended_at)` 时间范围查询动态推导，天然支持相邻段 3min 缓冲展示共享边界点。
+3. **精确切割，类型明确**：所有关闭的段必须有明确的 `segment_type`；`NULL` 仅允许出现在实时开放中的段（状态尚未确认时）。
+
+---
+
+### E.2 段类型完整定义
+
+| segment_type | 中文 | started_at | ended_at | 大屏颜色 | 前端默认显示 |
+|---|---|---|---|---|---|
+| `loading` | 装料中 | `zone_entry_at`（回溯） | `zone_exit_at` | 橙色 `#fa8c16` | ✅ 显示 |
+| `unloading` | 卸料中 | `zone_entry_at`（回溯） | `zone_exit_at` | 绿色 `#52c41a` | ✅ 显示 |
+| `transport_loaded` | 运料中 | `zone_exit_at`（装料区） | `zone_entry_at`（卸料区） | 红色 `#f5222d` | ✅ 显示 |
+| `transport_empty` | 空载中 | `zone_exit_at`（卸料区） | `zone_entry_at`（装料区） | 蓝色 `#1890ff` | ✅ 显示 |
+| `unknown` | 未知轨迹 | 上一段 `ended_at` / 连接时 | 停车检测 `stationary_since` / 新围栏进入 | 灰色 `#8c8c8c` | ✅ 显示 |
+| `idle` | 停车闲置 | `stationary_since`（回溯） | 离开 100m 范围时刻 | 浅灰色 `#d9d9d9` | ❌ 默认隐藏 |
+| `NULL` | 开放中（待确认）| — | `NULL` | 同 `unknown` | ✅ 显示 |
+
+> **idle 段说明**：`segment_type = 'idle'` 即为隐藏条件，无需额外 `is_idle` 字段。前端"显示停车记录"开关控制此类段的可见性。
+
+---
+
+### E.3 关键业务规则
+
+#### 驻留判定（秒制）
+
+- 全局参数 `business_config.loading_dwell_s`（默认 300s）/ `unloading_dwell_s`（默认 300s）
+- 车辆在围栏内停留 ≥ 阈值 → 确认装/卸料，段 `started_at` 回溯至 `zone_entry_at`
+- 驻留确认前已离开围栏（短暂进入） → 吸收入当前段，不建新段
+
+#### 停车判定（100m 半径 + 10min）
+
+- 车辆在 100m 半径内持续 ≥ `park_threshold_min`（默认 10 分钟），或设备掉线
+- 满足条件 → 关闭当前段（`ended_at = stationary_since`，回溯），开启 `idle` 段
+- `idle` 段 `started_at = stationary_since`（DeviceState 中已存储）
+
+#### 运输超时（方案 X：原地改类型）
+
+- `transport_loaded` / `transport_empty` 超过 `transport_timeout_min`（默认 30min）未到达目标区域
+- `UPDATE track_segment SET segment_type = 'unknown' WHERE id = current_segment_id`
+- 段继续开放，继续积累点位，直至停车阈值或新围栏进入
+
+#### 3min 展示缓冲（仅展示，不入库）
+
+- `business_config.segment_buffer_min`（默认 3，单位分钟）
+- 查询 `transport_loaded` / `transport_empty` 段的点位时，额外取 `started_at - buffer` 到 `ended_at + buffer`
+- 前端按时间分三段着色：预缓冲灰 → 主色 → 后缓冲灰
+- `loading` / `unloading` / `unknown` / `idle` 段不应用缓冲
+
+#### 降采样规则
+
+- `unknown` / `idle` 类型段：应用 `TABLESAMPLE`，最多返回 25000 点
+- 其余类型段：返回全部点（通常持续时间短，点数可控）
+
+#### 多围栏优先级
+
+- 同一点同时在多个装/卸料围栏内：**装料优先于卸料**；同类型多围栏取 `zone_entry_at` 更早者
+- 装料区与卸料区不得重叠；前端围栏绘制界面应检测重叠并自动提醒
+
+---
+
+### E.4 实时分段状态机
+
+```
+【设备连接 / 上一段结束】
+    │
+    ▼
+开启 unknown 段（started_at = now）
+    │
+    ├──► 进入装料围栏
+    │        │ 开始驻留计时（zone_entry_at = now，zone_entry_id = zone.id）
+    │        ├─ 驻留 ≥ loading_dwell_s
+    │        │       │ 关闭 unknown 段（ended_at = zone_entry_at）
+    │        │       │ 开启 loading 段（started_at = zone_entry_at）
+    │        │       └─► 离开装料区
+    │        │               │ 关闭 loading 段（ended_at = zone_exit_at）
+    │        │               └─ 开启 transport_loaded 段（started_at = zone_exit_at）
+    │        │                       ├─ 进入卸料区 → 关闭 transport_loaded，开启 unloading
+    │        │                       ├─ 超时 → UPDATE segment_type='unknown'，继续开放
+    │        │                       └─ 停车阈值 → 关闭段，开启 idle
+    │        └─ 驻留 < 阈值即离开 → 继续 unknown 段（吸收，不建新段）
+    │
+    ├──► 进入卸料围栏（逻辑同装料区，产生 unloading → transport_empty）
+    │
+    ├──► 停车阈值（100m/10min）
+    │        │ 关闭当前段（ended_at = stationary_since，回溯）
+    │        └─ 开启 idle 段（started_at = stationary_since）
+    │               └─► 车辆移动（离开 100m 范围）
+    │                       │ 关闭 idle 段（ended_at = now）
+    │                       └─ 开启新 unknown 段
+    │
+    └──► 设备掉线
+             └─ 关闭当前段（ended_at = last_point_at）
+```
+
+---
+
+### E.5 历史全量重分析算法（`POST /api/admin/resegment-history`）
+
+```python
+# 伪代码
+async def resegment_history(vehicle_id, start_time, end_time, conn):
+    # 1. 删除目标时间范围内全部旧段
+    await conn.execute(
+        "DELETE FROM track_segment WHERE vehicle_id=$1 AND started_at >= $2 AND started_at < $3",
+        vehicle_id, start_time, end_time,
+    )
+    # 2. 读取原始点位（仅 GPS 点，跳过 LBS）
+    points = await conn.fetch(
+        "SELECT * FROM location_point WHERE vehicle_id=$1 AND recorded_at BETWEEN $2 AND $3"
+        " AND loc_type='gps' ORDER BY recorded_at",
+        vehicle_id, start_time, end_time,
+    )
+    # 3. 读取活跃围栏
+    zones = await geo_zone_repo.find_all_enabled(conn)
+    # 4. 初始化批处理状态机（与实时逻辑共享核心函数）
+    state = BatchSegmentState(vehicle_id=vehicle_id)
+    # 5. 逐点运行状态机
+    for pt in points:
+        zones_at = geofence_service.get_zones_at_point(pt.lat, pt.lng, zones)
+        await segment_state_machine.process(state, pt, zones_at, conn)
+    # 6. 关闭最后一个开放段
+    await state.flush(conn)
+```
+
+> **重要**：实时处理与批处理必须共享同一套状态机核心逻辑（`segment_state_machine.process`），保证两者产出一致。
+
+---
+
+### E.6 数据库变更（Alembic V007）
+
+| 变更 | DDL |
+|------|-----|
+| `location_point` 删除 `segment_id` 列 | `ALTER TABLE location_point DROP COLUMN segment_id` |
+| 删除相关索引 | `DROP INDEX idx_lp_segment` |
+| `work_state_t` 枚举新增 `idle` | `ALTER TYPE work_state_t ADD VALUE IF NOT EXISTS 'idle'` |
+| `business_config` 驻留阈值改秒 | `RENAME loading_dwell_min → loading_dwell_s`，值 ×60 |
+| `business_config` 驻留阈值改秒 | `RENAME unloading_dwell_min → unloading_dwell_s`，值 ×60 |
+| `business_config` 新增展示缓冲 | `ADD COLUMN segment_buffer_min SMALLINT NOT NULL DEFAULT 3` |
+
+---
+
+### E.7 已知 Edge Case 与待优化项
+
+| 编号 | 场景 | 当前处理 | 后续优化方向 |
+|------|------|---------|-------------|
+| EC-1 | 3min 缓冲超过相邻段时长（运输 < 6min）| 缓冲延伸至相邻段内，视觉重叠 | 暂不处理；实操极少出现，文档标注 |
+| EC-2 | unknown 段持续 6h 以上（点位约 21600 个）| 降采样（TABLESAMPLE，≤25000）| 后续可按"班次/24h"自动切割 |
+| EC-3 | 设备重连时 zone_entry_at 丢失 | 驻留计时重置，可能漏判装/卸料 | 后续从 `work_session` 表恢复驻留状态 |
+| EC-4 | 装料区/卸料区围栏重叠 | 不支持 | 前端绘制时检测并自动提醒 |
+| EC-5 | GPS 批量补发（断线后重连回放）| 服务端按接收顺序处理，时序可能偏差 | 后续改为按 `recorded_at` 排序再处理 |
