@@ -71,7 +71,8 @@ frontend/
 │   │   ├── DeviceStatusTag.vue    # 设备在线/离线 Tag
 │   │   ├── EventTypeTag.vue       # 事件类型 Tag
 │   │   ├── GeoZoneTypeTag.vue     # 围栏类型 Tag
-│   │   └── DeviceOnlineBadge.vue  # 设备在线/离线徽章
+│   │   ├── DeviceOnlineBadge.vue  # 设备在线/离线徽章
+│   │   └── screen/DateRangePicker.vue  # 大屏时间范围选择（v1.3.5）
 │   │
 │   ├── layouts/
 │   │   ├── AuthLayout.vue     # 登录页：浅蓝科技渐变背景 + 浮动光晕
@@ -193,9 +194,16 @@ watch(lastMessage, (frame) => {
 
 ```
 后端 EventBus.publish → SSE 流 → useSSE composable
-→ dashboardStore.updatePosition / addAlert
-→ AMap.Marker.setPosition() / ElNotification 告警弹窗
+→ screenStore.updatePosition / addAlert
+→ ScreenMap Marker 更新 / ElNotification 告警弹窗
 ```
+
+`ScreenMap` 点击车辆后的高亮轨迹选段规则（v1.3.5）：
+
+1. 优先匹配实时状态对应运输段（`transport_loaded` / `transport_empty`）
+2. 若无匹配，选择开放段（`ended_at == null`）
+3. 兜底使用最新段（列表首项，`started_at DESC`）
+4. 查询点位时透传 `buffer_min`，保证运输段缓冲展示一致
 
 ---
 
@@ -284,6 +292,7 @@ await post('/admin/config', config.value, {
 | P10 | 大屏围栏叠加开关 + 俯视卡车方向指示 + 图层切换 | ✅ 完成 |
 | P11 | 系统设置三级阈值说明 + 历史重分析工具 + 运输超时配置 | ✅ 完成 |
 | P12 | 系统更名为"姚家平车辆智能监管平台" | ✅ 完成 |
+| P13 | 大屏日期筛选联动 + 轨迹高亮纠偏（v1.3.5） | ✅ 完成 |
 
 ---
 

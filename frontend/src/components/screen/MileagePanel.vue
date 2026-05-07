@@ -121,38 +121,55 @@ onUnmounted(() => {
   <ScreenPanel :title="panelTitle">
     <template #header-extra>
       <DateRangePicker />
-      <div class="mode-toggle">
-        <button :class="{ active: mode === 'km' }" @click="mode = 'km'">里程</button>
-        <button :class="{ active: mode === 'min' }" @click="mode = 'min'">时长</button>
-      </div>
     </template>
 
-    <div class="chart-wrap">
-      <div ref="chartRef" class="pie-chart" />
-      <div v-if="data" class="center-label">
-        <div class="cl-val">{{ totalLabel(data) }}</div>
-        <div class="cl-sub">合计</div>
+    <div class="mileage-body">
+      <div class="mode-toggle-row">
+        <div class="mode-toggle">
+          <button :class="{ active: mode === 'km' }" @click="mode = 'km'">里程</button>
+          <button :class="{ active: mode === 'min' }" @click="mode = 'min'">时长</button>
+        </div>
       </div>
-    </div>
-    <div v-if="data" class="legend-list">
-      <div
-        v-for="[k, v] in Object.entries(data.mileage_by_type)"
-        :key="k"
-        class="legend-row"
-      >
-        <span class="dot" :style="{ background: STATE_COLORS[k] ?? '#999' }" />
-        <span class="lname">{{ STATE_LABELS[k] ?? k }}</span>
-        <span class="lval">{{ formatVal(mode === 'km' ? v.total_km : v.total_min) }}</span>
-        <span class="lcnt">{{ v.count }} 趟</span>
+      <div class="chart-wrap">
+        <div ref="chartRef" class="pie-chart" />
+        <div v-if="data" class="center-label">
+          <div class="cl-val">{{ totalLabel(data) }}</div>
+          <div class="cl-sub">合计</div>
+        </div>
       </div>
+      <div v-if="data" class="legend-list">
+        <div
+          v-for="[k, v] in Object.entries(data.mileage_by_type)"
+          :key="k"
+          class="legend-row"
+        >
+          <span class="dot" :style="{ background: STATE_COLORS[k] ?? '#999' }" />
+          <span class="lname">{{ STATE_LABELS[k] ?? k }}</span>
+          <span class="lval">{{ formatVal(mode === 'km' ? v.total_km : v.total_min) }}</span>
+          <span class="lcnt">{{ v.count }} 趟</span>
+        </div>
+      </div>
+      <div v-else class="loading">加载中…</div>
     </div>
-    <div v-else class="loading">加载中…</div>
   </ScreenPanel>
 </template>
 
 <style scoped>
+.mileage-body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.mode-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
 .chart-wrap {
-  height: 130px; flex-shrink: 0;
+  height: 130px;
+  flex-shrink: 0;
   position: relative;
   display: flex; align-items: center; justify-content: center;
 }
@@ -183,7 +200,10 @@ onUnmounted(() => {
 }
 
 .legend-list {
-  overflow-y: auto; padding-top: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 4px;
   scrollbar-width: thin; scrollbar-color: rgba(0,180,255,.2) transparent;
 }
 .legend-row {

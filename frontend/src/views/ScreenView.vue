@@ -87,12 +87,18 @@ onUnmounted(() => {
 
       <!-- ── 左侧面板列 ── -->
       <aside class="s-side s-left">
-        <SummaryPanel :data="screen.summary" />
-        <FleetListPanel
-          :online-ids="onlineIds"
-          @select-vehicle="handleSelectVehicle"
-        />
-        <MileagePanel :data="screen.segmentStats" />
+        <div class="left-slot left-summary">
+          <SummaryPanel :data="screen.summary" />
+        </div>
+        <div class="left-slot left-fleet">
+          <FleetListPanel
+            :online-ids="onlineIds"
+            @select-vehicle="handleSelectVehicle"
+          />
+        </div>
+        <div class="left-slot left-mileage">
+          <MileagePanel :data="screen.segmentStats" />
+        </div>
       </aside>
 
       <!-- ── 中间地图 ── -->
@@ -204,6 +210,13 @@ onUnmounted(() => {
 }
 /* 三个面板等分高度 */
 .s-side > * { flex: 1; min-height: 0; }
+
+/* 左侧高度比例：压缩运营概览，拉长运输里程 */
+.left-slot { min-height: 0; display: flex; }
+.left-slot > * { flex: 1; min-height: 0; }
+.s-left .left-summary { flex: 0.84; }
+.s-left .left-fleet   { flex: 1.08; }
+.s-left .left-mileage { flex: 1.38; }
 
 /* ── 地图区 ──────────────────────────────────────────────────── */
 .s-map-wrap {

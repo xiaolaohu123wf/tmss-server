@@ -162,6 +162,12 @@ CREATE TRIGGER trg_device_updated_at
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
+> **IMEI 约束与恢复语义（v1.3.5）**  
+> `device.imei` 由全局唯一约束 `uq_imei` 保证不可重复。应用层创建设备时采用：
+> 1) 若命中同 IMEI 且 `deleted_at IS NOT NULL`，先恢复软删除记录（清空 `deleted_at`）；  
+> 2) 若命中同 IMEI 且仍活跃，返回 HTTP `409 conflict`。  
+> 该策略保证 IMEI 身份稳定，不产生重复设备行。
+
 ---
 
 ### 4. `driver` — 驾驶员

@@ -1058,17 +1058,39 @@ repos:
 
 ---
 
+## 附录 D-1：大屏轨迹高亮规范（v1.3.5）
+
+> **版本**：v1.3.5  
+> **状态**：已实现  
+> **影响范围**：`frontend/src/components/screen/ScreenMap.vue`、`app/http/routers/router_track_segments.py`
+
+### E.1 选段优先级（点击车辆）
+
+大屏点击车辆后，轨迹高亮段必须按以下优先级选择，避免误选历史段：
+
+1. 优先匹配 SSE 实时状态对应的运输段（`transport_loaded` / `transport_empty`）
+2. 若无匹配，选择当前开放段（`ended_at IS NULL`）
+3. 再兜底选择最新段（`ORDER BY started_at DESC` 的首项）
+
+### E.2 点位查询参数约束
+
+- `GET /api/track-segments/{id}/points` 必须透传列表接口返回的 `buffer_min`
+- 运输段使用 `buffer_min=3`（或配置值）展示前后缓冲轨迹
+- 非运输段应使用 `buffer_min=0`
+
+---
+
 ## 附录 E：轨迹分段重构设计规范（v1.2.0）
 
 > **版本**：v1.2.0（2026-05-07 设计定稿）  
-> **状态**：待实现，见 DEVPLAN.md §阶段14  
-> **影响范围**：`track_segment_service`、`work_state_service`、`location_repo`、`track_query_repo`、`segment_sweeper`、`DeviceState`、`business_config`、前端 `TracksView`、`SettingsView`、`DashboardView`
+> **状态**：已实现（含历史重分割与查询链路）  
+> **影响范围**：`track_segment_service`、`work_state_service`、`location_repo`、`track_query_repo`、`segment_sweeper`、`DeviceState`、`business_config`、前端 `TracksView`、`DashboardView`
 
 ---
 
 ### E.1 设计原则
 
-1. **原始定位数据不可修改**：`location_point` 表中的 GPS 字段（lat/lng/speed/altitude/recorded_at）在任何情况下不得更新或删除（管理员删除轨迹段时级联硬删除为唯一例外）。
+1. **原始定位数据不可修改**：`location_point` 表中的 GPS 字段（lat/lng/speed/altitude/recorded_at）在任何情况下不得更新或删除（删除轨迹段不影响原始点位）。
 2. **段与点解耦**：删除 `location_point.segment_id` 外键列，段的点集通过 `(vehicle_id, recorded_at BETWEEN started_at AND ended_at)` 时间范围查询动态推导，天然支持相邻段 3min 缓冲展示共享边界点。
 3. **精确切割，类型明确**：所有关闭的段必须有明确的 `segment_type`；`NULL` 仅允许出现在实时开放中的段（状态尚未确认时）。
 

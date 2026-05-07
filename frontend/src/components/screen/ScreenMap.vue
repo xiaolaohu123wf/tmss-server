@@ -74,7 +74,7 @@ function markerHtml(plate: string, state: string, online: boolean) {
     ? `background:${color};box-shadow:0 0 12px ${color};width:18px;height:18px`
     : `background:${color};box-shadow:0 0 8px ${color}`
   const pulseStyle = large
-    ? `border-color:${color};width:27px;height:27px;top:-4px`
+    ? `border-color:${color};width:27px;height:27px`
     : `border-color:${color}`
   const pulse = online ? `<span class="mp" style="${pulseStyle}"></span>` : ''
   return `
@@ -273,14 +273,15 @@ async function loadTrack(vehicleId: number) {
     if (currentTrackVehicleId !== vehicleId) return
     if (!segs.length) return
 
+    // 优先使用与实时状态一致的在途段，其次开放段，最后兜底最新段（segs[0]）
     const realtimeState = positions.get(vehicleId)?.state ?? null
     const transportSeg = (realtimeState === 'transport_loaded' || realtimeState === 'transport_empty')
       ? segs.find(s => s.segment_type === realtimeState)
       : null
     const openSeg = segs.find(s => !s.ended_at)
-    // /track-segments 按 started_at DESC 返回，segs[0] 才是最新段
     const chosenSeg = transportSeg ?? openSeg ?? segs[0]
     const bufferMin = Math.max(0, Number(chosenSeg.buffer_min ?? 0))
+
     const pts = await get<PtItem[]>(
       `/track-segments/${chosenSeg.id}/points?limit=2000&buffer_min=${bufferMin}`
     )
@@ -446,29 +447,59 @@ onMounted(async () => {
   } catch { /* 围栏加载失败时静默 */ }
 
   // 6. 注入全局 marker CSS（一次性）
-  if (!document.getElementById('sm-style')) {
-    const s = document.createElement('style')
-    s.id = 'sm-style'
-    s.textContent = `
-      .sm-wrap { position:relative; width:64px; }
-      .sm-dot  { width:12px; height:12px; border-radius:50%; margin:0 auto; }
+  const styleText = `
+      .sm-wrap {
+        position: relative;
+        width: 32px;
+        height: 32px;
+      }
+      .sm-dot  {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
       .sm-label {
-        font-size:10px; color:#fff; white-space:nowrap;
-        background:rgba(0,0,0,.55); border-radius:3px;
-        padding:0 3px; text-align:center; margin-top:2px;
-        backdrop-filter:blur(4px);
+        position: absolute;
+        left: 50%;
+        top: calc(100% - 2px);
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: #fff;
+        white-space: nowrap;
+        background: rgba(0,0,0,.55);
+        border-radius: 3px;
+        padding: 0 3px;
+        text-align: center;
+        backdrop-filter: blur(4px);
       }
       .mp {
-        position:absolute; top:-3px; left:50%; transform:translateX(-50%);
-        width:18px; height:18px; border-radius:50%;
-        border:2px solid; opacity:.4;
-        animation:mp-pulse 1.8s ease-out infinite;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid;
+        opacity: .4;
+        transform: translate(-50%, -50%);
+        animation: mp-pulse 1.8s ease-out infinite;
       }
       @keyframes mp-pulse {
-        0%   { transform:translateX(-50%) scale(0.6); opacity:.6; }
-        100% { transform:translateX(-50%) scale(1.8); opacity:0; }
+        0%   { transform: translate(-50%, -50%) scale(0.6); opacity: .6; }
+        100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
       }
     `
+  const existed = document.getElementById('sm-style') as HTMLStyleElement | null
+  if (existed) {
+    existed.textContent = styleText
+  } else {
+    const s = document.createElement('style')
+    s.id = 'sm-style'
+    s.textContent = styleText
     document.head.appendChild(s)
   }
 })
