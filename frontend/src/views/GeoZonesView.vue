@@ -29,7 +29,7 @@ const {
   fitPolygon,
   startDrawPolygon,
   setLayers,
-} = useAmap('geo-zone-map', { zoom: 14, center: [109.4753, 30.2832] })
+} = useAmap('geo-zone-map', { zoom: 15, center: [109.2695, 30.383164] })
 
 // ─── layer switcher ───────────────────────────────────────────────────────────
 type LayerKey = 'standard' | 'satellite' | 'satellite_road'

@@ -9,6 +9,7 @@ export interface ScreenSummary {
 
 export interface TypeStat {
   total_km: number
+  total_min: number
   count: number
 }
 

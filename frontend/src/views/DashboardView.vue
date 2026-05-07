@@ -28,10 +28,10 @@ const dashboardStore = useDashboardStore()
 const authStore = useAuthStore()
 
 // 地图中心点初始值（等待后端返回后覆盖）
-const mapCenter = ref<[number, number]>([109.4753, 30.2832])
+const mapCenter = ref<[number, number]>([109.2695, 30.383164])
 
 const { map, init: initMap, setLayers, createPolygon } = useAmap('dashboard-map', {
-  zoom: 14,
+  zoom: 15,
   center: mapCenter.value,
 })
 
@@ -396,7 +396,7 @@ onMounted(async () => {
   await nextTick()
   // 从后端读取地图默认中心点，成功则覆盖初始值
   try {
-    const cfg = await get<{ map_center_lng: number; map_center_lat: number }>('/admin/map-config')
+    const cfg = await get<{ map_center_lng: number; map_center_lat: number; map_zoom?: number }>('/admin/map-config')
     mapCenter.value = [cfg.map_center_lng, cfg.map_center_lat]
   } catch {
     // 读取失败保留硬编码默认值

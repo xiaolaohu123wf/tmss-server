@@ -151,9 +151,51 @@ const ZONE_COLORS: Record<string, string> = {
 const markers = new Map<number, AMapMarkerInst>()
 // vehicleId → last position
 const positions = new Map<number, { lat: number; lng: number; state: string; plate: string }>()
-// track polyline
-let trackLine: AMapPolyInst | null = null
+
+// ── 轨迹动画状态 ─────────────────────────────────────────────
+let trackLine: AMapPolyInst | null = null        // 保留旧引用，兼容 watch 里的清理
+let trackLayers: AMapPolyInst[]   = []           // 三层发光折线
+let trackHead:   AMapMarkerInst | null = null    // 滑行光头
+let trackAnimFrame: number | null = null         // RAF id
+let trackPath: [number, number][] = []           // 当前路径点
 const loadingTrack = ref(false)
+
+function clearTrack() {
+  if (trackAnimFrame !== null) { cancelAnimationFrame(trackAnimFrame); trackAnimFrame = null }
+  trackLayers.forEach(l => l.setMap(null))
+  trackLayers = []
+  trackHead?.setMap(null); trackHead = null
+  trackLine?.setMap(null); trackLine = null
+  trackPath = []
+}
+
+/** 按 progress(0→1) 插值折线上的坐标 */
+function interpPath(path: [number, number][], t: number): [number, number] {
+  const n = path.length
+  if (n === 0) return [0, 0]
+  if (n === 1) return path[0]
+  const idx = t * (n - 1)
+  const i = Math.min(Math.floor(idx), n - 2)
+  const f = idx - i
+  return [
+    path[i][0] + (path[i + 1][0] - path[i][0]) * f,
+    path[i][1] + (path[i + 1][1] - path[i][1]) * f,
+  ]
+}
+
+function startTrackAnim() {
+  if (!trackHead || !map) return
+  let progress = 0
+  const SPEED = 0.0006   // 每帧前进比例，控制光头速度
+
+  function tick() {
+    progress = (progress + SPEED) % 1
+    const pos = interpPath(trackPath, progress)
+    trackHead!.setPosition(pos)
+    trackAnimFrame = requestAnimationFrame(tick)
+  }
+  trackAnimFrame = requestAnimationFrame(tick)
+}
 
 // ── SSE ─────────────────────────────────────────────────────
 const { lastMessage: locMsg } = useSSE<VehiclePosition>('/api/stream', 'location')
@@ -187,12 +229,11 @@ watch(locMsg, (msg) => {
   emit('online-ids', new Set(markers.keys()))
 })
 
-// ── 点击车辆后加载近1小时轨迹 ────────────────────────────────
+// ── 点击车辆后加载近1小时轨迹（三层发光 + 动画光头） ──────────
 async function loadTrack(vehicleId: number) {
   if (loadingTrack.value || !map) return
   loadingTrack.value = true
-  trackLine?.setMap(null)
-  trackLine = null
+  clearTrack()
 
   try {
     const now = new Date()
@@ -200,30 +241,61 @@ async function loadTrack(vehicleId: number) {
     const to   = now.toISOString()
 
     type PtItem = { lat: number; lng: number }
-    // 先拉轨迹段列表
     const segs = await get<{ id: number }[]>(
       `/track-segments?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&vehicle_id=${vehicleId}&show_idle=false&limit=50`
     )
     if (!segs.length) return
 
-    // 取最后一段的点位
     const lastSeg = segs[segs.length - 1]
     const pts = await get<PtItem[]>(`/track-segments/${lastSeg.id}/points?limit=2000`)
-
     const path: [number, number][] = pts.map(p => [p.lng, p.lat])
     if (!path.length) return
 
-    trackLine = new AMap.Polyline({
+    trackPath = path
+
+    // 层1：外辉光（宽且透明）
+    const outerGlow = new AMap.Polyline({
       path,
-      strokeColor: '#00d4ff',
-      strokeWeight: 3,
-      strokeOpacity: 0.9,
-      lineJoin: 'round',
-      lineCap: 'round',
+      strokeColor: '#1a8cff',
+      strokeWeight: 18,
+      strokeOpacity: 0.08,
+      lineJoin: 'round', lineCap: 'round',
+      map,
+    })
+    // 层2：中辉光
+    const midGlow = new AMap.Polyline({
+      path,
+      strokeColor: '#1eb8ff',
+      strokeWeight: 7,
+      strokeOpacity: 0.35,
+      lineJoin: 'round', lineCap: 'round',
+      map,
+    })
+    // 层3：亮芯线
+    const core = new AMap.Polyline({
+      path,
+      strokeColor: '#7de8ff',
+      strokeWeight: 2,
+      strokeOpacity: 0.95,
+      lineJoin: 'round', lineCap: 'round',
+      map,
+    })
+    trackLayers = [outerGlow, midGlow, core]
+    // 兼容旧 watch 清理逻辑
+    trackLine = core
+
+    // 动画光头（从路径起点出发）
+    trackHead = new AMap.Marker({
+      position: path[0],
+      content: '<div class="track-head"></div>',
+      anchor: 'center',
+      zIndex: 200,
       map,
     })
 
-    map.setFitView([trackLine as unknown], false, [10, 10, 10, 10], 17)
+    startTrackAnim()
+
+    map.setFitView([core as unknown], false, [60, 60, 60, 60], 17)
   } finally {
     loadingTrack.value = false
   }
@@ -231,7 +303,7 @@ async function loadTrack(vehicleId: number) {
 
 watch(() => props.focusVehicleId, (id) => {
   if (id != null) loadTrack(id)
-  else { trackLine?.setMap(null); trackLine = null }
+  else clearTrack()
 })
 
 // ── 初始化地图 ───────────────────────────────────────────────
@@ -239,12 +311,14 @@ onMounted(async () => {
   if (!mapEl.value || !window.AMap) return
 
   // 1. 读后台地图中心配置（与 DashboardView / GeoZonesView 保持一致）
-  let centerLng = 109.4753
-  let centerLat = 30.2832
+  let centerLng = 109.2695
+  let centerLat = 30.383164
+  let initZoom  = 15
   try {
-    const cfg = await get<{ map_center_lng: number; map_center_lat: number }>('/admin/map-config')
+    const cfg = await get<{ map_center_lng: number; map_center_lat: number; map_zoom: number }>('/admin/map-config')
     centerLng = cfg.map_center_lng
     centerLat = cfg.map_center_lat
+    if (cfg.map_zoom) initZoom = cfg.map_zoom
   } catch { /* 保持默认中心 */ }
 
   // 2. 读正射影像 meta（可选，404 时静默忽略）
@@ -260,16 +334,13 @@ onMounted(async () => {
     if (r.ok) orthoMeta = (await r.json()) as OrthoMeta
   } catch { /* 正射瓦片不存在，跳过 */ }
 
-  // 如果正射 meta 有中心，以正射中心为地图中心（精度更高）
-  if (orthoMeta?.center_gcj_lnglat) {
-    ;[centerLng, centerLat] = orthoMeta.center_gcj_lnglat
-  }
+  // 初始视角统一由后台「系统设置」里的地图中心/缩放决定，正射层仅叠加瓦片
 
   // 3. 初始化高德地图（默认卫星 + 暗色风格）
   satelliteLayer = new AMap.TileLayer.Satellite({ zIndex: 2 })
   roadNetLayer   = new AMap.TileLayer.RoadNet({ zIndex: 3, opacity: 0.8 })
   map = new AMap.Map(mapEl.value, {
-    zoom: 16,
+    zoom: initZoom,
     center: [centerLng, centerLat],
     mapStyle: 'amap://styles/dark',
     layers: [satelliteLayer],   // 路网层单独 add，方便独立控制
@@ -383,7 +454,7 @@ watch(showFences,  (v) => {
 onUnmounted(() => {
   markers.forEach(mk => mk.setMap(null))
   markers.clear()
-  trackLine?.setMap(null)
+  clearTrack()
   fencePolygons = []
   fenceLabels.forEach(lb => lb.setMap(null))
   fenceLabels = []
@@ -519,5 +590,20 @@ onUnmounted(() => {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
   background: rgba(0,20,60,.85); border: 1px solid rgba(0,180,255,.3);
   color: #00d4ff; font-size: 13px; padding: 8px 20px; border-radius: 20px;
+}
+
+/* 轨迹动画光头（尺寸约为原设计的 0.5 倍） */
+:global(.track-head) {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 3px  1.5px rgba(30, 200, 255, 0.9),
+    0 0 7px  3px rgba(30, 160, 255, 0.6),
+    0 0 14px 6px rgba(0, 100, 255, 0.25);
+  animation: th-pulse 1.2s ease-in-out infinite;
+}
+@keyframes th-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%       { transform: scale(1.2); opacity: 0.75; }
 }
 </style>

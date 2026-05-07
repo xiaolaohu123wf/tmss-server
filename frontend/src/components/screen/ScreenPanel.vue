@@ -9,6 +9,7 @@ defineProps<{ title: string }>()
       <span class="s-panel-corner tl" />
       <span class="s-panel-corner tr" />
       <span class="s-panel-title">{{ title }}</span>
+      <slot name="header-extra" />
     </div>
     <div class="s-panel-body">
       <slot />
@@ -35,6 +36,7 @@ defineProps<{ title: string }>()
   border-bottom: 1px solid rgba(0, 180, 255, 0.15);
   background: linear-gradient(90deg, rgba(0, 100, 200, 0.25) 0%, transparent 60%);
   flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
 }
 
 .s-panel-corner {
@@ -52,6 +54,7 @@ defineProps<{ title: string }>()
   color: #7dd3fc;
   letter-spacing: 1px;
   text-transform: uppercase;
+  flex: 1;
 }
 
 .s-panel-body {

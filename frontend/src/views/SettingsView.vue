@@ -13,6 +13,7 @@ interface BusinessConfig {
   weather_city: string
   map_center_lng: number
   map_center_lat: number
+  map_zoom: number
   transport_timeout_min: number
 }
 
@@ -22,8 +23,9 @@ const config = ref<BusinessConfig>({
   alert_cooldown_s: 10,
   hb_timeout_s: 90,
   weather_city: 'Beijing',
-  map_center_lng: 109.4753,
-  map_center_lat: 30.2832,
+  map_center_lng: 109.2695,
+  map_center_lat: 30.383164,
+  map_zoom: 15,
   transport_timeout_min: 30,
 })
 
@@ -253,9 +255,19 @@ onMounted(loadConfig)
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="默认缩放级别">
+          <el-input-number
+            v-model="config.map_zoom"
+            :min="3"
+            :max="20"
+            :precision="0"
+            :step="1"
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item>
           <el-text type="info" size="small">
-            大屏及历史轨迹页面初始打开时的地图视角中心。坐标可从高德地图右键菜单复制（高德输出的即为 GCJ-02）。
+            大屏及历史轨迹页面初始打开时的地图视角中心与缩放级别。坐标可从高德地图右键菜单复制（高德输出的即为 GCJ-02）。缩放级别参考：10=市区，14=街道，16=小区，18=建筑。
           </el-text>
         </el-form-item>
       </el-form>

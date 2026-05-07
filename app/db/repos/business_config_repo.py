@@ -17,7 +17,8 @@ UPDATE_BUSINESS_CONFIG_SQL = """
         map_center_lng      = $6,
         map_center_lat      = $7,
         transport_timeout_min = $8,
-        segment_buffer_min  = $9
+        segment_buffer_min  = $9,
+        map_zoom            = $10
     WHERE id = 1
 """
 
@@ -33,6 +34,7 @@ class BusinessConfigRow:
     map_center_lat: float
     transport_timeout_min: int
     segment_buffer_min: int = 3
+    map_zoom: int = 15
 
 
 def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[name-defined]
@@ -46,6 +48,7 @@ def _row_from_record(r: asyncpg.Record) -> BusinessConfigRow:  # type: ignore[na
         map_center_lat=float(r["map_center_lat"]),
         transport_timeout_min=int(r["transport_timeout_min"]),
         segment_buffer_min=int(r["segment_buffer_min"]) if r["segment_buffer_min"] is not None else 3,
+        map_zoom=int(r["map_zoom"]) if r["map_zoom"] is not None else 15,
     )
 
 
@@ -71,6 +74,7 @@ class BusinessConfigRepo:
         map_center_lat: float,
         transport_timeout_min: int,
         segment_buffer_min: int = 3,
+        map_zoom: int = 15,
     ) -> None:
         await conn.execute(
             UPDATE_BUSINESS_CONFIG_SQL,
@@ -83,4 +87,5 @@ class BusinessConfigRepo:
             map_center_lat,
             transport_timeout_min,
             segment_buffer_min,
+            map_zoom,
         )

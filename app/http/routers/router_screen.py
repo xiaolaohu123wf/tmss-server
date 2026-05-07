@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -98,9 +97,7 @@ async def get_segment_stats(
     fid = _fleet_id(session)
     since = datetime.now(tz=timezone.utc) - timedelta(days=30)
 
-    if fid is None:
-        mileage_rows = await conn.fetch(
-            """
+    _seg_select = """
             SELECT
               ts.segment_type,
               COALESCE(SUM(
@@ -114,8 +111,16 @@ async def get_segment_stats(
                   ELSE 0
                 END
               ), 0) AS total_km,
+              COALESCE(SUM(
+                EXTRACT(EPOCH FROM (ts.ended_at - ts.started_at)) / 60
+              ), 0) AS total_min,
               COUNT(*) AS cnt
             FROM track_segment ts
+    """
+
+    if fid is None:
+        mileage_rows = await conn.fetch(
+            _seg_select + """
             WHERE ts.started_at >= $1
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IS NOT NULL
@@ -139,22 +144,7 @@ async def get_segment_stats(
         )
     else:
         mileage_rows = await conn.fetch(
-            """
-            SELECT
-              ts.segment_type,
-              COALESCE(SUM(
-                CASE
-                  WHEN ts.start_lat IS NOT NULL AND ts.end_lat IS NOT NULL
-                  THEN 2 * 6371 * asin(sqrt(
-                    power(sin(radians((ts.end_lat - ts.start_lat) / 2)), 2) +
-                    cos(radians(ts.start_lat)) * cos(radians(ts.end_lat)) *
-                    power(sin(radians((ts.end_lng - ts.start_lng) / 2)), 2)
-                  )) * 1.2
-                  ELSE 0
-                END
-              ), 0) AS total_km,
-              COUNT(*) AS cnt
-            FROM track_segment ts
+            _seg_select + """
             JOIN vehicle v ON v.id = ts.vehicle_id
               AND v.deleted_at IS NULL AND v.fleet_id = $2
             WHERE ts.started_at >= $1
@@ -186,6 +176,7 @@ async def get_segment_stats(
     mileage_by_type = {
         r["segment_type"]: {
             "total_km": round(float(r["total_km"]), 1),
+            "total_min": round(float(r["total_min"]), 0),
             "count": int(r["cnt"]),
         }
         for r in mileage_rows
@@ -223,35 +214,39 @@ async def get_alarm_stats(
     fid = _fleet_id(session)
     since = datetime.now(tz=timezone.utc) - timedelta(days=30)
 
-    def _build_count_sql(fid_filter: bool, event_types: str) -> tuple[str, list]:
-        if fid_filter:
-            return (
-                f"""
-                SELECT COUNT(*) AS cnt
-                FROM event e
-                JOIN vehicle v ON v.id = e.vehicle_id
-                  AND v.deleted_at IS NULL AND v.fleet_id = $2
-                WHERE e.occurred_at >= $1 AND e.event_type IN {event_types}
-                """,
-                [since, fid],
-            )
-        return (
-            f"""
-            SELECT COUNT(*) AS cnt FROM event
-            WHERE occurred_at >= $1 AND event_type IN {event_types}
-            """,
-            [since],
+    # asyncpg 单连接不支持并发，顺序执行三条计数查询
+    if fid is None:
+        overspeed_cnt = await conn.fetchval(
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_OVERSPEED}",
+            since,
         )
-
-    sql_spd, args_spd   = _build_count_sql(fid is not None, _WARN_OVERSPEED)
-    sql_bld, args_bld   = _build_count_sql(fid is not None, _WARN_BLIND)
-    sql_oob, args_oob   = _build_count_sql(fid is not None, _WARN_OUT_BOUNDS)
-
-    overspeed_cnt, blind_cnt, oob_cnt = await asyncio.gather(
-        conn.fetchval(sql_spd, *args_spd),
-        conn.fetchval(sql_bld, *args_bld),
-        conn.fetchval(sql_oob, *args_oob),
-    )
+        blind_cnt = await conn.fetchval(
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_BLIND}",
+            since,
+        )
+        oob_cnt = await conn.fetchval(
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_OUT_BOUNDS}",
+            since,
+        )
+    else:
+        overspeed_cnt = await conn.fetchval(
+            f"""SELECT COUNT(*) FROM event e
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
+                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_OVERSPEED}""",
+            since, fid,
+        )
+        blind_cnt = await conn.fetchval(
+            f"""SELECT COUNT(*) FROM event e
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
+                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_BLIND}""",
+            since, fid,
+        )
+        oob_cnt = await conn.fetchval(
+            f"""SELECT COUNT(*) FROM event e
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
+                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_OUT_BOUNDS}""",
+            since, fid,
+        )
 
     # 每日趋势（三类合并）
     if fid is None:

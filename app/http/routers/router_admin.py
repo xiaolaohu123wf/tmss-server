@@ -37,6 +37,7 @@ class BusinessConfigPayload(BaseModel):
     weather_city: str = Field(min_length=1, max_length=50)
     map_center_lng: float = Field(ge=-180, le=180)
     map_center_lat: float = Field(ge=-90, le=90)
+    map_zoom: int = Field(default=15, ge=3, le=20)
     transport_timeout_min: int = Field(ge=0, le=480)
     segment_buffer_min: int = Field(default=3, ge=0, le=30)
 
@@ -49,16 +50,18 @@ class BusinessConfigPayload(BaseModel):
             "weather_city": self.weather_city,
             "map_center_lng": self.map_center_lng,
             "map_center_lat": self.map_center_lat,
+            "map_zoom": self.map_zoom,
             "transport_timeout_min": self.transport_timeout_min,
             "segment_buffer_min": self.segment_buffer_min,
         }
 
 
 class MapCenterPayload(BaseModel):
-    """地图默认中心点，供所有已登录用户读取。"""
+    """地图默认中心点和缩放，供所有已登录用户读取。"""
 
     map_center_lng: float
     map_center_lat: float
+    map_zoom: int = 15
 
 
 def _payload_from_row(row: BusinessConfigRow) -> BusinessConfigPayload:
@@ -70,6 +73,7 @@ def _payload_from_row(row: BusinessConfigRow) -> BusinessConfigPayload:
         weather_city=row.weather_city,
         map_center_lng=row.map_center_lng,
         map_center_lat=row.map_center_lat,
+        map_zoom=row.map_zoom,
         transport_timeout_min=row.transport_timeout_min,
         segment_buffer_min=row.segment_buffer_min,
     )
@@ -147,10 +151,11 @@ async def get_map_config(
     """返回地图默认中心点，供大屏、历史轨迹等页面初始化时调用。所有已登录用户可访问。"""
     row = await _business_config_repo.get_singleton(conn)
     if row is None:
-        return ok({"map_center_lng": 109.4753, "map_center_lat": 30.2832})
+        return ok({"map_center_lng": 109.2695, "map_center_lat": 30.383164, "map_zoom": 15})
     return ok(MapCenterPayload(
         map_center_lng=row.map_center_lng,
         map_center_lat=row.map_center_lat,
+        map_zoom=row.map_zoom,
     ).model_dump())
 
 

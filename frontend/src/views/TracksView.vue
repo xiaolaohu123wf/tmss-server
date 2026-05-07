@@ -85,7 +85,7 @@ const trackStageRevealed = ref(true)
 
 const { map, init, createPolyline, createMarker, createPolygon } = useAmap('tracks-map', {
   zoom: 13,
-  center: [109.4753, 30.2832],
+  center: [109.2695, 30.383164],
 })
 
 let _mapCenterFromConfig: [number, number] | undefined
