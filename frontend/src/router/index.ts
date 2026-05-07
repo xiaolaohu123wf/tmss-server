@@ -7,6 +7,8 @@ declare module 'vue-router' {
     title?: string
     public?: boolean
     requiresManager?: boolean
+    /** 大屏路由：terminal 角色不可访问 */
+    requiresScreenAccess?: boolean
     /** 去掉 layout-main 的 padding，页面内容贴边显示（用于地图全屏页面） */
     noPadding?: boolean
   }
@@ -86,6 +88,19 @@ const router = createRouter({
       component: () => import('@/views/FleetProfileView.vue'),
       meta: { layout: 'main', title: '我的车队' },
     },
+    // ── 大屏路由 ────────────────────────────────────────────────────
+    {
+      path: '/screen-login',
+      name: 'screenLogin',
+      component: () => import('@/views/ScreenLoginView.vue'),
+      meta: { layout: 'screen', public: true },
+    },
+    {
+      path: '/screen',
+      name: 'screen',
+      component: () => import('@/views/ScreenView.vue'),
+      meta: { layout: 'screen', title: '运营大屏', requiresScreenAccess: true },
+    },
     {
       path: '/:pathMatch(.*)*',
       redirect: '/dashboard',
@@ -104,8 +119,17 @@ router.beforeEach(async (to) => {
   if (!auth.isLoggedIn) {
     const ok = await auth.fetchMe()
     if (!ok) {
+      // 大屏路由跳转到大屏登录页
+      if (to.meta.requiresScreenAccess) {
+        return { name: 'screenLogin', query: { redirect: to.fullPath } }
+      }
       return { name: 'login', query: { redirect: to.fullPath } }
     }
+  }
+
+  // 大屏路由：terminal 角色不可访问
+  if (to.meta.requiresScreenAccess && auth.role === 'terminal') {
+    return { name: 'screenLogin' }
   }
 
   // Manager-only routes

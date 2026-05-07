@@ -2,12 +2,14 @@
 import { useRoute } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
 import AuthLayout from '@/layouts/AuthLayout.vue'
+import ScreenLayout from '@/layouts/ScreenLayout.vue'
 
 const route = useRoute()
 </script>
 
 <template>
   <AuthLayout v-if="route.meta.layout === 'auth'" />
+  <ScreenLayout v-else-if="route.meta.layout === 'screen'" />
   <MainLayout v-else />
 </template>
 

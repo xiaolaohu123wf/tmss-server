@@ -122,6 +122,7 @@ def create_app() -> FastAPI:
     from app.http.routers.router_tcp_messages import router as router_tcp_messages
     from app.http.routers.router_stream import router as router_stream
     from app.http.routers.router_track_segments import router as router_track_segments
+    from app.http.routers.router_screen import router as router_screen
 
     app.include_router(router_auth.router)
     app.include_router(router_vehicles)
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(router_tcp_messages)
     app.include_router(router_stream)
     app.include_router(router_track_segments)
+    app.include_router(router_screen)
 
     # 监控页面
     _static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
@@ -178,9 +180,25 @@ def create_app() -> FastAPI:
 
         _index_html = os.path.join(_dist_dir, "index.html")
 
+        # dist/ 根目录中的静态文件（manifest.webmanifest、favicon.ico、icons/ 等）
+        # 需要在 SPA fallback 之前精确匹配，否则会被当作 SPA 路由返回 index.html。
+        _ROOT_STATIC_EXTS = {".webmanifest", ".ico", ".png", ".svg", ".txt", ".xml"}
+
         @app.get("/{full_path:path}", include_in_schema=False)
-        async def spa_fallback(full_path: str) -> FileResponse:  # noqa: ARG001
-            """SPA 路由兜底：任何非 /api/* 路径都返回 index.html，交由 Vue Router 处理。"""
+        async def spa_fallback(full_path: str) -> FileResponse:
+            """
+            SPA 路由兜底：
+            - dist/ 根级静态文件（manifest、favicon 等）直接返回磁盘文件
+            - 其余路径返回 index.html，交由 Vue Router 处理
+            """
+            candidate = os.path.normpath(os.path.join(_dist_dir, full_path))
+            # 安全检查：防止路径穿越
+            if (
+                candidate.startswith(_dist_dir)
+                and os.path.isfile(candidate)
+                and os.path.splitext(candidate)[1] in _ROOT_STATIC_EXTS
+            ):
+                return FileResponse(candidate)
             return FileResponse(_index_html)
 
     return app

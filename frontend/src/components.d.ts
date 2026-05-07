@@ -7,8 +7,10 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AlarmPanel: typeof import('./components/screen/AlarmPanel.vue')['default']
     DeviceOnlineBadge: typeof import('./components/DeviceOnlineBadge.vue')['default']
     DeviceStatusTag: typeof import('./components/DeviceStatusTag.vue')['default']
+    EfficiencyPanel: typeof import('./components/screen/EfficiencyPanel.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElButton: typeof import('element-plus/es')['ElButton']
@@ -46,10 +48,16 @@ declare module 'vue' {
     ElText: typeof import('element-plus/es')['ElText']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     EventTypeTag: typeof import('./components/EventTypeTag.vue')['default']
+    FleetListPanel: typeof import('./components/screen/FleetListPanel.vue')['default']
     GeoZoneTypeTag: typeof import('./components/GeoZoneTypeTag.vue')['default']
+    MileagePanel: typeof import('./components/screen/MileagePanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    ScreenMap: typeof import('./components/screen/ScreenMap.vue')['default']
+    ScreenPanel: typeof import('./components/screen/ScreenPanel.vue')['default']
+    SummaryPanel: typeof import('./components/screen/SummaryPanel.vue')['default']
     TabBar: typeof import('./components/TabBar.vue')['default']
+    TripPanel: typeof import('./components/screen/TripPanel.vue')['default']
     VehicleStatusTag: typeof import('./components/VehicleStatusTag.vue')['default']
   }
   export interface ComponentCustomProperties {

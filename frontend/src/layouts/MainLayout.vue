@@ -157,6 +157,16 @@ async function handleLogout() {
             <span v-if="!isMobile">我的车队</span>
           </el-button>
 
+          <el-button
+            v-if="auth.role === 'manager' || auth.role === 'fleet_captain'"
+            link
+            type="primary"
+            @click="router.push('/screen')"
+          >
+            <el-icon><Monitor /></el-icon>
+            <span v-if="!isMobile">运营大屏</span>
+          </el-button>
+
           <el-button link @click="handleLogout">
             <el-icon><SwitchButton /></el-icon>
             <span v-if="!isMobile">退出</span>
