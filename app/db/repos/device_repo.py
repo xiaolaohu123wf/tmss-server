@@ -10,6 +10,7 @@ from app.db.queries.device import (
     INSERT_BIND_SQL,
     INSERT_DEVICE_SQL,
     PATCH_ICCID_IF_EMPTY_SQL,
+    RESTORE_DEVICE_SQL,
     SELECT_ACTIVE_BIND_BY_DEVICE_SQL,
     SELECT_ACTIVE_BIND_BY_VEHICLE_SQL,
     SELECT_ALL_DEVICES_SQL,
@@ -35,6 +36,7 @@ class DeviceRow:
     vehicle_id: Optional[int] = None
     vehicle_license: Optional[str] = None
     fleet_id: Optional[int] = None
+    deleted_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,12 @@ class DeviceRepo:
     ) -> None:
         await conn.execute(SOFT_DELETE_DEVICE_SQL, device_id)
 
+    async def restore_soft_deleted(
+        self, conn: asyncpg.Connection, device_id: int  # type: ignore[type-arg]
+    ) -> None:
+        """软删除记录被同一 IMEI 再次注册时恢复，否则管理后台列表不显示。"""
+        await conn.execute(RESTORE_DEVICE_SQL, device_id)
+
     async def get_active_bind_by_device(
         self, conn: asyncpg.Connection, device_id: int  # type: ignore[type-arg]
     ) -> Optional[BindRow]:
@@ -197,6 +205,7 @@ def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
         vehicle_id=row["vehicle_id"] if "vehicle_id" in keys else None,
         vehicle_license=row["vehicle_license"] if "vehicle_license" in keys else None,
         fleet_id=row["fleet_id"] if "fleet_id" in keys else None,
+        deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
     )
 
 

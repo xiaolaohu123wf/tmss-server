@@ -60,6 +60,11 @@ class RegisterHandler:
             await logger.ainfo("device_auto_created", imei=imei, device_id=device_id)
         else:
             device_id = row.id
+            if row.deleted_at is not None:
+                await _device_repo.restore_soft_deleted(conn, device_id)
+                await logger.ainfo(
+                    "device_restored_soft_deleted", imei=imei, device_id=device_id
+                )
             # 查询当前绑定及车牌
             bind = await _device_repo.get_active_bind_by_device(conn, device_id)
             vehicle_id = bind.vehicle_id if bind else None

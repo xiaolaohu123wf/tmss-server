@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class EventResponse(BaseModel):
@@ -54,6 +54,22 @@ class DeviceCreate(BaseModel):
     model: Optional[str] = None
     firmware_version: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator('imei', mode='before')
+    @classmethod
+    def _normalize_imei(cls, v: object) -> str:
+        from app.core.imei import normalize_device_imei
+
+        if v is None:
+            return ''
+        return normalize_device_imei(str(v))
+
+    @model_validator(mode='after')
+    def _imei_must_be_valid(self) -> DeviceCreate:
+        s = self.imei.strip()
+        if len(s) != 15 or not s.isdigit():
+            raise ValueError('IMEI 须为 15 位数字（14 位模块号请前补 0 或由系统自动补全）')
+        return self
 
 
 class DeviceMetadataUpdate(BaseModel):

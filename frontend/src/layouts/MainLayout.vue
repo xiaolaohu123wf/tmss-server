@@ -116,7 +116,7 @@ async function handleLogout() {
     </el-aside>
 
     <!-- ══════════════════ 右侧主区域 ══════════════════ -->
-    <el-container direction="vertical" style="min-width:0">
+    <el-container direction="vertical" class="layout-content-wrap" style="min-width: 0">
 
       <!-- ── 顶栏 ────────────────────────────────────── -->
       <el-header class="layout-header">
@@ -240,7 +240,14 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-.layout-container { height: 100vh; overflow: hidden; }
+.layout-container { height: 100vh; overflow: hidden; display: flex; }
+
+/* 右侧：顶栏 + 主内容（flex 链上必须 min-height:0 才能让 main 内部滚动） */
+.layout-content-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 
 /* ══ PC 侧边栏 ════════════════════════════════════════════ */
 .layout-aside {
@@ -331,11 +338,14 @@ async function handleLogout() {
   overflow-y: auto;
   padding: 20px;
   flex: 1;
+  min-height: 0;
   scrollbar-gutter: stable;
 }
 .layout-main--mobile {
   padding: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .layout-main--fullscreen {
   padding: 0;

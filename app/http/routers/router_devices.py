@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncpg
+import structlog
+from asyncpg.exceptions import UniqueViolationError
 from fastapi import APIRouter, Depends, Query
 
 from datetime import datetime, timezone
@@ -9,7 +11,7 @@ from typing import Optional
 from app.cache.session_repo import SessionData
 from app.core.device_registry import device_registry
 from app.core.enums import Command, EventType, UserRole
-from app.core.exceptions import NotFoundError, PermissionDeniedError
+from app.core.exceptions import NotFoundError, PermissionDeniedError, ValidationError
 from app.db.deps import get_db_conn
 from app.db.repos.device_repo import DeviceRepo
 from app.db.repos.event_repo import EventRepo
@@ -27,6 +29,7 @@ from app.services.command_service import send as send_command_to_device
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 _repo = DeviceRepo()
 _event_repo = EventRepo()
+_logger = structlog.get_logger()
 
 
 @router.get("")
@@ -73,10 +76,24 @@ async def create_device(
     session: SessionData = Depends(require_manager),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    new_id = await _repo.create(
-        conn, imei=body.imei, iccid=body.iccid,
-        model=body.model, firmware_version=body.firmware_version, notes=body.notes,
-    )
+    try:
+        new_id = await _repo.create(
+            conn, imei=body.imei, iccid=body.iccid,
+            model=body.model, firmware_version=body.firmware_version, notes=body.notes,
+        )
+    except UniqueViolationError:
+        # 常见原因：IMEI 对应行曾被软删除，INSERT 撞唯一约束 → 恢复记录
+        existing = await _repo.find_by_imei(conn, body.imei)
+        if existing and existing.deleted_at is not None:
+            await _repo.restore_soft_deleted(conn, existing.id)
+            new_id = existing.id
+            await _logger.ainfo(
+                "device_restored_via_http_create",
+                imei=body.imei,
+                device_id=new_id,
+            )
+        else:
+            raise ValidationError("该 IMEI 已在系统中存在，请勿重复添加")
     row = await _repo.find_by_id(conn, new_id)
     assert row is not None
     return ok(DeviceResponse(
