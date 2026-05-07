@@ -46,6 +46,14 @@ class ValidationError(TmssError):
     message = "业务校验失败"
 
 
+class ConflictError(TmssError):
+    """资源已存在，操作冲突。"""
+
+    code = "conflict"
+    http_status = 409
+    message = "资源已存在"
+
+
 class ExternalServiceError(TmssError):
     """外部服务调用失败（天气 API 等）。"""
 

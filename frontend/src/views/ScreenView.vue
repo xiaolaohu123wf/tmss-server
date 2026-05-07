@@ -101,17 +101,8 @@ onUnmounted(() => {
           :focus-vehicle-id="focusVehicleId"
           @online-ids="ids => { onlineIds = ids }"
           @select-vehicle="handleMapSelectVehicle"
+          @clear-focus="focusVehicleId = null"
         />
-        <!-- 点击车辆后显示取消聚焦按钮 -->
-        <Transition name="fade">
-          <button
-            v-if="focusVehicleId"
-            class="clear-focus-btn"
-            @click="focusVehicleId = null"
-          >
-            ✕ 退出轨迹视图
-          </button>
-        </Transition>
       </section>
 
       <!-- ── 右侧面板列 ── -->
@@ -222,18 +213,66 @@ onUnmounted(() => {
   box-shadow: 0 0 20px rgba(0,100,255,.15);
 }
 
-.clear-focus-btn {
-  position: absolute; top: 10px; right: 10px;
-  z-index: 10;
-  font-size: 12px; color: #00d4ff;
-  background: rgba(0,20,60,.85);
-  border: 1px solid rgba(0,212,255,.35); border-radius: 16px;
-  padding: 4px 14px; cursor: pointer;
-  transition: all .2s;
+
+</style>
+
+<!-- 大屏暗色日期选择器弹窗全局样式 -->
+<style>
+.screen-date-picker.el-picker__popper {
+  background: rgba(2, 12, 40, 0.97) !important;
+  border: 1px solid rgba(0, 180, 255, 0.3) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7) !important;
 }
-.clear-focus-btn:hover { background: rgba(0,40,100,.9); }
-
-.fade-enter-active, .fade-leave-active { transition: opacity .25s; }
-.fade-enter-from, .fade-leave-to       { opacity: 0; }
-
+.screen-date-picker .el-date-range-picker__content,
+.screen-date-picker .el-date-picker__header,
+.screen-date-picker .el-picker-panel {
+  background: transparent !important;
+  color: #c8e8ff !important;
+}
+.screen-date-picker .el-date-table th,
+.screen-date-picker .el-date-range-picker__header div {
+  color: rgba(0, 212, 255, 0.7) !important;
+}
+.screen-date-picker .el-date-table td .el-date-table-cell__text {
+  color: #c8e8ff !important;
+}
+.screen-date-picker .el-date-table td.disabled .el-date-table-cell__text {
+  color: rgba(100, 140, 180, 0.3) !important;
+  background: transparent !important;
+}
+.screen-date-picker .el-date-table td.in-range .el-date-table-cell {
+  background: rgba(0, 100, 200, 0.25) !important;
+}
+.screen-date-picker .el-date-table td.start-date .el-date-table-cell,
+.screen-date-picker .el-date-table td.end-date .el-date-table-cell {
+  background: rgba(0, 180, 255, 0.35) !important;
+  border-radius: 4px !important;
+}
+.screen-date-picker .el-date-table td:hover .el-date-table-cell {
+  background: rgba(0, 150, 255, 0.2) !important;
+}
+.screen-date-picker .el-date-range-picker__header button,
+.screen-date-picker .el-date-picker__header button {
+  color: rgba(0, 212, 255, 0.7) !important;
+}
+.screen-date-picker .el-date-range-picker__header button:hover,
+.screen-date-picker .el-date-picker__header button:hover {
+  color: #00d4ff !important;
+}
+.screen-date-picker .el-picker-panel__footer {
+  background: rgba(0, 10, 35, 0.95) !important;
+  border-top: 1px solid rgba(0, 180, 255, 0.15) !important;
+}
+.screen-date-picker .el-picker-panel__footer .el-button {
+  color: #00d4ff !important;
+  border-color: rgba(0, 180, 255, 0.3) !important;
+}
+.screen-date-picker .el-date-range-picker__time-header {
+  background: transparent !important;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.15) !important;
+  color: #c8e8ff !important;
+}
+.screen-date-picker .el-date-range-picker .el-picker-panel__body {
+  background: transparent !important;
+}
 </style>

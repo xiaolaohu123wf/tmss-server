@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import ScreenPanel from './ScreenPanel.vue'
+import DateRangePicker from './DateRangePicker.vue'
 import type { SegmentStats } from '@/api/screen'
 
 const props = defineProps<{ data: SegmentStats | null }>()
@@ -27,7 +28,7 @@ const STATE_COLORS: Record<string, string> = {
 }
 
 const panelTitle = computed(() =>
-  mode.value === 'km' ? '运输里程 · 近30天' : '运输时长 · 近30天'
+  mode.value === 'km' ? '运输里程' : '运输时长'
 )
 
 function formatVal(v: number) {
@@ -119,6 +120,7 @@ onUnmounted(() => {
 <template>
   <ScreenPanel :title="panelTitle">
     <template #header-extra>
+      <DateRangePicker />
       <div class="mode-toggle">
         <button :class="{ active: mode === 'km' }" @click="mode = 'km'">里程</button>
         <button :class="{ active: mode === 'min' }" @click="mode = 'min'">时长</button>

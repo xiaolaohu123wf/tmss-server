@@ -33,10 +33,10 @@ class DeviceRow:
     model: Optional[str]
     firmware_version: Optional[str]
     notes: Optional[str]
+    deleted_at: Optional[datetime] = None
     vehicle_id: Optional[int] = None
     vehicle_license: Optional[str] = None
     fleet_id: Optional[int] = None
-    deleted_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -111,10 +111,29 @@ class DeviceRepo:
         firmware_version: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> int:
+        """
+        创建设备。
+        - 若 IMEI 已存在且已软删除 → 恢复（清除 deleted_at），返回其 ID。
+        - 若 IMEI 已存在且未删除 → 抛出 UniqueViolationError（由上层处理为 409）。
+        - 否则正常插入。
+        """
+        # 先尝试恢复软删除
+        restored_id: Optional[int] = await conn.fetchval(RESTORE_DEVICE_SQL, imei)
+        if restored_id is not None:
+            return restored_id
+        # 正常插入（若 IMEI 活跃则会触发唯一约束，由调用方捕获）
         device_id: int = await conn.fetchval(
             INSERT_DEVICE_SQL, imei, iccid, model, firmware_version, notes
         )
         return device_id
+
+    async def restore_by_imei(
+        self,
+        conn: asyncpg.Connection,  # type: ignore[type-arg]
+        imei: str,
+    ) -> Optional[int]:
+        """恢复被软删除的设备，返回恢复后的 id；若设备不存在或未删除则返回 None。"""
+        return await conn.fetchval(RESTORE_DEVICE_SQL, imei)
 
     async def update_firmware(
         self,
@@ -158,12 +177,6 @@ class DeviceRepo:
     ) -> None:
         await conn.execute(SOFT_DELETE_DEVICE_SQL, device_id)
 
-    async def restore_soft_deleted(
-        self, conn: asyncpg.Connection, device_id: int  # type: ignore[type-arg]
-    ) -> None:
-        """软删除记录被同一 IMEI 再次注册时恢复，否则管理后台列表不显示。"""
-        await conn.execute(RESTORE_DEVICE_SQL, device_id)
-
     async def get_active_bind_by_device(
         self, conn: asyncpg.Connection, device_id: int  # type: ignore[type-arg]
     ) -> Optional[BindRow]:
@@ -202,10 +215,10 @@ def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
         model=row["model"],
         firmware_version=row["firmware_version"],
         notes=row["notes"],
+        deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
         vehicle_id=row["vehicle_id"] if "vehicle_id" in keys else None,
         vehicle_license=row["vehicle_license"] if "vehicle_license" in keys else None,
         fleet_id=row["fleet_id"] if "fleet_id" in keys else None,
-        deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
     )
 
 

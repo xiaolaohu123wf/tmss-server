@@ -1,7 +1,8 @@
-<!-- 右侧面板1：运输趟次（近30天每日柱状图） -->
+<!-- 右侧面板1：运输趟次（每日柱状图） -->
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import ScreenPanel from './ScreenPanel.vue'
+import DateRangePicker from './DateRangePicker.vue'
 import type { SegmentStats } from '@/api/screen'
 
 const props = defineProps<{ data: SegmentStats | null }>()
@@ -90,7 +91,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ScreenPanel title="运输趟次 · 近30天">
+  <ScreenPanel title="运输趟次">
+    <template #header-extra>
+      <DateRangePicker />
+    </template>
     <div class="chart-full">
       <div ref="chartRef" style="width:100%;height:100%" />
     </div>

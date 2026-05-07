@@ -1,7 +1,16 @@
 SELECT_DEVICE_BY_IMEI_SQL = """
     SELECT id, imei, iccid, model, firmware_version, notes, deleted_at
     FROM device
-    WHERE btrim(imei::text) = btrim($1::text)
+    WHERE imei = $1
+"""
+
+# 恢复软删除的设备（TCP 连接时 / 管理员重新添加时使用）
+RESTORE_DEVICE_SQL = """
+    UPDATE device
+    SET deleted_at = NULL
+    WHERE imei = $1
+      AND deleted_at IS NOT NULL
+    RETURNING id
 """
 
 SELECT_DEVICE_BY_ID_SQL = """
@@ -71,12 +80,6 @@ SOFT_DELETE_DEVICE_SQL = """
     SET deleted_at = NOW()
     WHERE id = $1
       AND deleted_at IS NULL
-"""
-
-RESTORE_DEVICE_SQL = """
-    UPDATE device
-    SET deleted_at = NULL
-    WHERE id = $1
 """
 
 SELECT_ACTIVE_BIND_BY_DEVICE_SQL = """

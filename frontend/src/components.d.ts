@@ -8,6 +8,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AlarmPanel: typeof import('./components/screen/AlarmPanel.vue')['default']
+    DateRangePicker: typeof import('./components/screen/DateRangePicker.vue')['default']
     DeviceOnlineBadge: typeof import('./components/DeviceOnlineBadge.vue')['default']
     DeviceStatusTag: typeof import('./components/DeviceStatusTag.vue')['default']
     EfficiencyPanel: typeof import('./components/screen/EfficiencyPanel.vue')['default']

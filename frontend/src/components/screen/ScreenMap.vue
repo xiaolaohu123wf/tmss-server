@@ -37,6 +37,7 @@ interface AMapInst {
   remove(o: unknown): void
   destroy(): void
   setFitView(overlays: unknown[], immediately?: boolean, avoid?: number[] | null, max?: number): void
+  setZoomAndCenter(zoom: number, center: [number, number], immediately?: boolean): void
   clearMap(): void
   setMapStyle(style: string): void
   setLayers(layers: AMapTileLayerInst[]): void
@@ -63,13 +64,23 @@ const STATE_COLOR: Record<string, string> = {
   idle:             '#6b7280',
 }
 
+const LARGE_STATES = new Set(['transport_loaded', 'transport_empty'])
+
 function markerHtml(plate: string, state: string, online: boolean) {
   const color = online ? (STATE_COLOR[state] ?? '#9ca3af') : '#6b7280'
-  const pulse = online ? `<span class="mp" style="border-color:${color}"></span>` : ''
+  const large = LARGE_STATES.has(state) && online
+  // 重载/空载图标放大 1.5 倍：点 18px，脉冲环 27px
+  const dotStyle = large
+    ? `background:${color};box-shadow:0 0 12px ${color};width:18px;height:18px`
+    : `background:${color};box-shadow:0 0 8px ${color}`
+  const pulseStyle = large
+    ? `border-color:${color};width:27px;height:27px;top:-4px`
+    : `border-color:${color}`
+  const pulse = online ? `<span class="mp" style="${pulseStyle}"></span>` : ''
   return `
   <div class="sm-wrap">
     ${pulse}
-    <div class="sm-dot" style="background:${color};box-shadow:0 0 8px ${color}"></div>
+    <div class="sm-dot" style="${dotStyle}"></div>
     <div class="sm-label">${plate}</div>
   </div>`
 }
@@ -78,6 +89,7 @@ function markerHtml(plate: string, state: string, online: boolean) {
 const emit = defineEmits<{
   (e: 'online-ids', ids: Set<number>): void
   (e: 'select-vehicle', vehicleId: number): void
+  (e: 'clear-focus'): void
 }>()
 
 const props = defineProps<{ focusVehicleId?: number | null }>()
@@ -147,6 +159,10 @@ const ZONE_COLORS: Record<string, string> = {
   speed_zone:    '#38bdf8',
 }
 
+// 初始视角（onMounted 时从后台读取并存储，退出轨迹视图时恢复）
+let initCenter: [number, number] = [109.2695, 30.383164]
+let initZoomLevel = 15
+
 // vehicleId → marker
 const markers = new Map<number, AMapMarkerInst>()
 // vehicleId → last position
@@ -159,6 +175,7 @@ let trackHead:   AMapMarkerInst | null = null    // 滑行光头
 let trackAnimFrame: number | null = null         // RAF id
 let trackPath: [number, number][] = []           // 当前路径点
 const loadingTrack = ref(false)
+let currentTrackVehicleId: number | null = null  // 正在加载轨迹的车辆 ID，用于取消过期请求
 
 function clearTrack() {
   if (trackAnimFrame !== null) { cancelAnimationFrame(trackAnimFrame); trackAnimFrame = null }
@@ -231,7 +248,9 @@ watch(locMsg, (msg) => {
 
 // ── 点击车辆后加载近1小时轨迹（三层发光 + 动画光头） ──────────
 async function loadTrack(vehicleId: number) {
-  if (loadingTrack.value || !map) return
+  if (!map) return
+  // 标记本次请求归属，后续 await 后若已切换车辆则丢弃结果
+  currentTrackVehicleId = vehicleId
   loadingTrack.value = true
   clearTrack()
 
@@ -241,13 +260,33 @@ async function loadTrack(vehicleId: number) {
     const to   = now.toISOString()
 
     type PtItem = { lat: number; lng: number }
-    const segs = await get<{ id: number }[]>(
+    type SegItem = {
+      id: number
+      segment_type?: string | null
+      ended_at?: string | null
+      buffer_min?: number
+    }
+    const segs = await get<SegItem[]>(
       `/track-segments?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&vehicle_id=${vehicleId}&show_idle=false&limit=50`
     )
+    // 若在等待期间用户已切换至其他车辆，丢弃本次结果
+    if (currentTrackVehicleId !== vehicleId) return
     if (!segs.length) return
 
-    const lastSeg = segs[segs.length - 1]
-    const pts = await get<PtItem[]>(`/track-segments/${lastSeg.id}/points?limit=2000`)
+    const realtimeState = positions.get(vehicleId)?.state ?? null
+    const transportSeg = (realtimeState === 'transport_loaded' || realtimeState === 'transport_empty')
+      ? segs.find(s => s.segment_type === realtimeState)
+      : null
+    const openSeg = segs.find(s => !s.ended_at)
+    // /track-segments 按 started_at DESC 返回，segs[0] 才是最新段
+    const chosenSeg = transportSeg ?? openSeg ?? segs[0]
+    const bufferMin = Math.max(0, Number(chosenSeg.buffer_min ?? 0))
+    const pts = await get<PtItem[]>(
+      `/track-segments/${chosenSeg.id}/points?limit=2000&buffer_min=${bufferMin}`
+    )
+    // 二次检查：points 请求也是异步的
+    if (currentTrackVehicleId !== vehicleId) return
+
     const path: [number, number][] = pts.map(p => [p.lng, p.lat])
     if (!path.length) return
 
@@ -297,13 +336,22 @@ async function loadTrack(vehicleId: number) {
 
     map.setFitView([core as unknown], false, [60, 60, 60, 60], 17)
   } finally {
-    loadingTrack.value = false
+    // 只有当前请求仍是最新请求时才关闭 loading 指示
+    if (currentTrackVehicleId === vehicleId) {
+      loadingTrack.value = false
+    }
   }
 }
 
 watch(() => props.focusVehicleId, (id) => {
-  if (id != null) loadTrack(id)
-  else clearTrack()
+  if (id != null) {
+    loadTrack(id)
+  } else {
+    currentTrackVehicleId = null
+    clearTrack()
+    // 退出轨迹视图：恢复初始视角
+    map?.setZoomAndCenter(initZoomLevel, initCenter, false)
+  }
 })
 
 // ── 初始化地图 ───────────────────────────────────────────────
@@ -311,15 +359,13 @@ onMounted(async () => {
   if (!mapEl.value || !window.AMap) return
 
   // 1. 读后台地图中心配置（与 DashboardView / GeoZonesView 保持一致）
-  let centerLng = 109.2695
-  let centerLat = 30.383164
-  let initZoom  = 15
   try {
     const cfg = await get<{ map_center_lng: number; map_center_lat: number; map_zoom: number }>('/admin/map-config')
-    centerLng = cfg.map_center_lng
-    centerLat = cfg.map_center_lat
-    if (cfg.map_zoom) initZoom = cfg.map_zoom
+    initCenter = [cfg.map_center_lng, cfg.map_center_lat]
+    if (cfg.map_zoom) initZoomLevel = cfg.map_zoom
   } catch { /* 保持默认中心 */ }
+  const [centerLng, centerLat] = initCenter
+  const initZoom = initZoomLevel
 
   // 2. 读正射影像 meta（可选，404 时静默忽略）
   interface OrthoMeta {
@@ -404,7 +450,7 @@ onMounted(async () => {
     const s = document.createElement('style')
     s.id = 'sm-style'
     s.textContent = `
-      .sm-wrap { position:relative; width:32px; }
+      .sm-wrap { position:relative; width:64px; }
       .sm-dot  { width:12px; height:12px; border-radius:50%; margin:0 auto; }
       .sm-label {
         font-size:10px; color:#fff; white-space:nowrap;
@@ -467,7 +513,8 @@ onUnmounted(() => {
   <div class="screen-map-root">
     <div ref="mapEl" class="amap-container" />
 
-    <!-- 右上角：图层控制面板 -->
+    <!-- 右上角：图层控制面板 + 退出轨迹视图按钮（同列纵向排列） -->
+    <div class="right-controls">
     <div class="layer-panel">
       <!-- 底图切换 -->
       <div class="lp-title">底图</div>
@@ -497,6 +544,18 @@ onUnmounted(() => {
         围栏
       </label>
     </div>
+
+    <!-- 退出轨迹视图按钮（图层面板正下方） -->
+    <Transition name="fade">
+      <button
+        v-if="focusVehicleId != null"
+        class="clear-focus-btn"
+        @click="emit('clear-focus')"
+      >
+        ✕ 退出轨迹视图
+      </button>
+    </Transition>
+    </div><!-- end right-controls -->
 
     <!-- 图例 -->
     <div class="map-legend">
@@ -530,8 +589,12 @@ onUnmounted(() => {
 .l-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
 .l-text { font-size: 13px; color: rgba(200,230,255,.9); font-weight: 500; }
 
-.layer-panel {
+.right-controls {
   position: absolute; top: 10px; right: 10px; z-index: 10;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+}
+
+.layer-panel {
   background: rgba(0,8,28,.86);
   border: 1px solid rgba(0,180,255,.25);
   border-radius: 8px; padding: 8px 10px;
@@ -539,6 +602,20 @@ onUnmounted(() => {
   min-width: 130px;
   box-shadow: 0 2px 12px rgba(0,0,0,.5);
 }
+
+.clear-focus-btn {
+  font-size: 12px; color: #00d4ff;
+  background: rgba(0,20,60,.85);
+  border: 1px solid rgba(0,212,255,.35); border-radius: 8px;
+  padding: 6px 10px; cursor: pointer;
+  transition: all .2s; text-align: center;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 12px rgba(0,0,0,.5);
+}
+.clear-focus-btn:hover { background: rgba(0,40,100,.9); }
+
+.fade-enter-active, .fade-leave-active { transition: opacity .25s; }
+.fade-enter-from, .fade-leave-to       { opacity: 0; }
 .lp-title {
   font-size: 10px; color: rgba(0,212,255,.45);
   text-transform: uppercase; letter-spacing: .08em;

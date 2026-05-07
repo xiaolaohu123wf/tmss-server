@@ -9,9 +9,7 @@ import structlog
 from app.cache.disconnect_cache import disconnect_cache
 from app.cache.pool import get_redis
 from app.core.device_registry import device_registry
-from app.core.enums import ZoneType
 from app.core.event_bus import event_bus
-from app.core.imei import normalize_device_imei as _normalize_module_imei
 from app.db.pool import get_pool
 from app.db.queries.business_config import SELECT_BUSINESS_CONFIG_SQL
 from app.core.enums import ZoneType
@@ -38,6 +36,17 @@ _geo_zone_repo = GeoZoneRepo()
 _weather_city_cache: str = "Nanjing"
 _weather_city_cached_at: float = 0.0
 _WEATHER_CITY_TTL_S = 60.0
+
+
+def _normalize_module_imei(raw: str) -> str:
+    """设备号入库存储：纯数字 14 位时前补 0 以符合 CHAR(15) IMEI 字段。"""
+    s = raw.strip()
+    digits = "".join(c for c in s if c.isdigit())
+    if len(digits) == 14:
+        return "0" + digits
+    if len(digits) == 15:
+        return digits
+    return s
 
 
 async def _get_gps_handler() -> GpsHandler:

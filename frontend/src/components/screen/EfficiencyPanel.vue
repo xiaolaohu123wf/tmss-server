@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import ScreenPanel from './ScreenPanel.vue'
+import DateRangePicker from './DateRangePicker.vue'
 import type { EfficiencyStats } from '@/api/screen'
 
 const props = defineProps<{ data: EfficiencyStats | null }>()
@@ -76,7 +77,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ScreenPanel title="效率分析 · 近30天">
+  <ScreenPanel title="效率分析">
+    <template #header-extra>
+      <DateRangePicker />
+    </template>
     <div class="eff-wrap">
       <!-- 指标横条图 -->
       <div ref="chartRef" class="bar-chart" />

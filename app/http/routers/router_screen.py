@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 import asyncpg
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.cache.session_repo import SessionData
 from app.core.enums import UserRole
@@ -19,6 +19,20 @@ router = APIRouter(prefix="/api/screen", tags=["screen"])
 
 def _fleet_id(session: SessionData) -> Optional[int]:
     return None if session.role == UserRole.MANAGER else session.fleet_id
+
+
+def _parse_range(from_date: Optional[str], to_date: Optional[str]) -> Tuple[datetime, datetime]:
+    """Parse YYYY-MM-DD strings into UTC datetimes. Defaults to last 30 days."""
+    now = datetime.now(tz=timezone.utc)
+    if from_date:
+        since = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        since = now - timedelta(days=30)
+    if to_date:
+        until = datetime.strptime(to_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+    else:
+        until = now + timedelta(days=1)
+    return since, until
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,15 +101,14 @@ async def get_summary(
 
 @router.get("/segment-stats")
 async def get_segment_stats(
+    from_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD，默认近30天"),
+    to_date: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD（含当天）"),
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """
-    近30天运输里程（按5种状态分组，直线×1.2修正）+
-    每日运输趟次（transport_loaded + transport_empty）
-    """
+    """运输里程（按5种状态分组，直线×1.2修正）+ 每日运输趟次（可指定日期范围）"""
     fid = _fleet_id(session)
-    since = datetime.now(tz=timezone.utc) - timedelta(days=30)
+    since, until = _parse_range(from_date, to_date)
 
     _seg_select = """
             SELECT
@@ -121,13 +134,13 @@ async def get_segment_stats(
     if fid is None:
         mileage_rows = await conn.fetch(
             _seg_select + """
-            WHERE ts.started_at >= $1
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IS NOT NULL
               AND ts.segment_type != 'idle'
             GROUP BY ts.segment_type
             """,
-            since,
+            since, until,
         )
         daily_rows = await conn.fetch(
             """
@@ -135,26 +148,25 @@ async def get_segment_stats(
               DATE(ts.started_at AT TIME ZONE 'Asia/Shanghai') AS day,
               COUNT(*) AS cnt
             FROM track_segment ts
-            WHERE ts.started_at >= $1
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IN ('transport_loaded', 'transport_empty')
             GROUP BY day ORDER BY day
             """,
-            since,
+            since, until,
         )
     else:
         mileage_rows = await conn.fetch(
             _seg_select + """
             JOIN vehicle v ON v.id = ts.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $2
-            WHERE ts.started_at >= $1
+              AND v.deleted_at IS NULL AND v.fleet_id = $3
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IS NOT NULL
               AND ts.segment_type != 'idle'
             GROUP BY ts.segment_type
             """,
-            since,
-            fid,
+            since, until, fid,
         )
         daily_rows = await conn.fetch(
             """
@@ -163,14 +175,13 @@ async def get_segment_stats(
               COUNT(*) AS cnt
             FROM track_segment ts
             JOIN vehicle v ON v.id = ts.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $2
-            WHERE ts.started_at >= $1
+              AND v.deleted_at IS NULL AND v.fleet_id = $3
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IN ('transport_loaded', 'transport_empty')
             GROUP BY day ORDER BY day
             """,
-            since,
-            fid,
+            since, until, fid,
         )
 
     mileage_by_type = {
@@ -201,51 +212,47 @@ _WARN_ALL          = "('overspeed','oncoming_warn','geofence_violation','ban_vio
 
 @router.get("/alarm-stats")
 async def get_alarm_stats(
+    from_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD，默认近30天"),
+    to_date: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD（含当天）"),
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """
-    近30天预警统计：
-    - overspeed     超速预警
-    - blind_zone    盲区提醒预警（oncoming_warn）
-    - out_of_bounds 超界预警（geofence_violation + ban_violation）
-    + 每日趋势
-    """
+    """预警统计：超速 / 盲区 / 超界 + 每日趋势（可指定日期范围）"""
     fid = _fleet_id(session)
-    since = datetime.now(tz=timezone.utc) - timedelta(days=30)
+    since, until = _parse_range(from_date, to_date)
 
     # asyncpg 单连接不支持并发，顺序执行三条计数查询
     if fid is None:
         overspeed_cnt = await conn.fetchval(
-            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_OVERSPEED}",
-            since,
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND occurred_at < $2 AND event_type IN {_WARN_OVERSPEED}",
+            since, until,
         )
         blind_cnt = await conn.fetchval(
-            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_BLIND}",
-            since,
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND occurred_at < $2 AND event_type IN {_WARN_BLIND}",
+            since, until,
         )
         oob_cnt = await conn.fetchval(
-            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND event_type IN {_WARN_OUT_BOUNDS}",
-            since,
+            f"SELECT COUNT(*) FROM event WHERE occurred_at >= $1 AND occurred_at < $2 AND event_type IN {_WARN_OUT_BOUNDS}",
+            since, until,
         )
     else:
         overspeed_cnt = await conn.fetchval(
             f"""SELECT COUNT(*) FROM event e
-                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
-                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_OVERSPEED}""",
-            since, fid,
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $3
+                WHERE e.occurred_at >= $1 AND e.occurred_at < $2 AND e.event_type IN {_WARN_OVERSPEED}""",
+            since, until, fid,
         )
         blind_cnt = await conn.fetchval(
             f"""SELECT COUNT(*) FROM event e
-                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
-                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_BLIND}""",
-            since, fid,
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $3
+                WHERE e.occurred_at >= $1 AND e.occurred_at < $2 AND e.event_type IN {_WARN_BLIND}""",
+            since, until, fid,
         )
         oob_cnt = await conn.fetchval(
             f"""SELECT COUNT(*) FROM event e
-                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $2
-                WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_OUT_BOUNDS}""",
-            since, fid,
+                JOIN vehicle v ON v.id = e.vehicle_id AND v.deleted_at IS NULL AND v.fleet_id = $3
+                WHERE e.occurred_at >= $1 AND e.occurred_at < $2 AND e.event_type IN {_WARN_OUT_BOUNDS}""",
+            since, until, fid,
         )
 
     # 每日趋势（三类合并）
@@ -254,10 +261,10 @@ async def get_alarm_stats(
             f"""
             SELECT DATE(occurred_at AT TIME ZONE 'Asia/Shanghai') AS day, COUNT(*) AS cnt
             FROM event
-            WHERE occurred_at >= $1 AND event_type IN {_WARN_ALL}
+            WHERE occurred_at >= $1 AND occurred_at < $2 AND event_type IN {_WARN_ALL}
             GROUP BY day ORDER BY day
             """,
-            since,
+            since, until,
         )
     else:
         daily_rows = await conn.fetch(
@@ -265,12 +272,11 @@ async def get_alarm_stats(
             SELECT DATE(e.occurred_at AT TIME ZONE 'Asia/Shanghai') AS day, COUNT(*) AS cnt
             FROM event e
             JOIN vehicle v ON v.id = e.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $2
-            WHERE e.occurred_at >= $1 AND e.event_type IN {_WARN_ALL}
+              AND v.deleted_at IS NULL AND v.fleet_id = $3
+            WHERE e.occurred_at >= $1 AND e.occurred_at < $2 AND e.event_type IN {_WARN_ALL}
             GROUP BY day ORDER BY day
             """,
-            since,
-            fid,
+            since, until, fid,
         )
 
     overspeed    = int(overspeed_cnt or 0)
@@ -293,17 +299,15 @@ async def get_alarm_stats(
 
 @router.get("/efficiency")
 async def get_efficiency(
+    from_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD，默认近30天"),
+    to_date: Optional[str] = Query(None, description="截止日期 YYYY-MM-DD（含当天）"),
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """
-    近30天效率分析：
-    - 开动率 = 有效作业时长 / (车辆数 × 30天 × 12h)
-    - 载重趟次占比 = transport_loaded / (loaded + empty)
-    - 平均单趟运输时长（分钟）
-    """
+    """效率分析：开动率 / 载重占比 / 平均单趟时长（可指定日期范围）"""
     fid = _fleet_id(session)
-    since = datetime.now(tz=timezone.utc) - timedelta(days=30)
+    since, until = _parse_range(from_date, to_date)
+    days_count = max((until - since).days, 1)
 
     if fid is None:
         rows = await conn.fetch(
@@ -313,13 +317,13 @@ async def get_efficiency(
               COUNT(*) AS cnt,
               AVG(EXTRACT(EPOCH FROM (ts.ended_at - ts.started_at)) / 60) AS avg_min
             FROM track_segment ts
-            WHERE ts.started_at >= $1
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IS NOT NULL
               AND ts.segment_type != 'idle'
             GROUP BY ts.segment_type
             """,
-            since,
+            since, until,
         )
         active_hours = await conn.fetchval(
             """
@@ -327,11 +331,11 @@ async def get_efficiency(
               EXTRACT(EPOCH FROM (ts.ended_at - ts.started_at)) / 3600
             ), 0)
             FROM track_segment ts
-            WHERE ts.started_at >= $1
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IN ('transport_loaded','transport_empty','loading','unloading')
             """,
-            since,
+            since, until,
         )
         vehicle_count = await conn.fetchval(
             "SELECT COUNT(*) FROM vehicle WHERE deleted_at IS NULL"
@@ -345,15 +349,14 @@ async def get_efficiency(
               AVG(EXTRACT(EPOCH FROM (ts.ended_at - ts.started_at)) / 60) AS avg_min
             FROM track_segment ts
             JOIN vehicle v ON v.id = ts.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $2
-            WHERE ts.started_at >= $1
+              AND v.deleted_at IS NULL AND v.fleet_id = $3
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IS NOT NULL
               AND ts.segment_type != 'idle'
             GROUP BY ts.segment_type
             """,
-            since,
-            fid,
+            since, until, fid,
         )
         active_hours = await conn.fetchval(
             """
@@ -362,13 +365,12 @@ async def get_efficiency(
             ), 0)
             FROM track_segment ts
             JOIN vehicle v ON v.id = ts.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $2
-            WHERE ts.started_at >= $1
+              AND v.deleted_at IS NULL AND v.fleet_id = $3
+            WHERE ts.started_at >= $1 AND ts.started_at < $2
               AND ts.ended_at IS NOT NULL
               AND ts.segment_type IN ('transport_loaded','transport_empty','loading','unloading')
             """,
-            since,
-            fid,
+            since, until, fid,
         )
         vehicle_count = await conn.fetchval(
             "SELECT COUNT(*) FROM vehicle WHERE deleted_at IS NULL AND fleet_id = $1",
@@ -394,7 +396,7 @@ async def get_efficiency(
     ]
     avg_transport_min = round(sum(transport_avgs) / len(transport_avgs), 1) if transport_avgs else 0.0
 
-    possible_hours = max(int(vehicle_count or 1), 1) * 30 * 12
+    possible_hours = max(int(vehicle_count or 1), 1) * days_count * 12
     utilization = min(round(float(active_hours or 0) / possible_hours * 100, 1), 99.9)
 
     return ok({

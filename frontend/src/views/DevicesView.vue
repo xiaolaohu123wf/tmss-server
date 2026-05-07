@@ -85,15 +85,10 @@ onMounted(loadData)
 // ── 管理员：创建设备 ───────────────────────────────────────────────────────────
 async function handleCreate() {
   try { await createFormRef.value!.validate() } catch { return }
-  try {
-    await devicesApi.create({ imei: createForm.value.imei.trim() })
-    ElMessage.success('设备已添加')
-    createVisible.value = false
-    createForm.value.imei = ''
-    await loadData()
-  } catch {
-    /* axios / 拦截器已提示 */
-  }
+  await devicesApi.create({ imei: createForm.value.imei })
+  ElMessage.success('设备已添加')
+  createVisible.value = false
+  await loadData()
 }
 
 // ── 编辑 ───────────────────────────────────────────────────────────────────────

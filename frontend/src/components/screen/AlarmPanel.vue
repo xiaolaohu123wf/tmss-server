@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import ScreenPanel from './ScreenPanel.vue'
+import DateRangePicker from './DateRangePicker.vue'
 import type { AlarmStats, DailyCount } from '@/api/screen'
 
 const props = defineProps<{ data: AlarmStats | null }>()
@@ -83,7 +84,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ScreenPanel title="预警次数 · 近30天">
+  <ScreenPanel title="预警次数">
+    <template #header-extra>
+      <DateRangePicker />
+    </template>
     <div class="alarm-wrap">
 
       <!-- 三类预警卡片 -->
@@ -103,7 +107,7 @@ onUnmounted(() => {
       <!-- 合计 -->
       <div v-if="data" class="total-row">
         <span class="t-num">{{ data.total }}</span>
-        <span class="t-label">近30天预警合计</span>
+        <span class="t-label">预警合计</span>
       </div>
 
       <!-- 每日趋势折线 -->

@@ -1,5 +1,10 @@
 import { get } from './index'
 
+export interface DateRange {
+  from_date?: string  // YYYY-MM-DD
+  to_date?: string    // YYYY-MM-DD
+}
+
 export interface ScreenSummary {
   vehicle_count: number
   fleet_count: number
@@ -42,7 +47,7 @@ export interface EfficiencyStats {
 
 export const screenApi = {
   summary: () => get<ScreenSummary>('/screen/summary'),
-  segmentStats: () => get<SegmentStats>('/screen/segment-stats'),
-  alarmStats: () => get<AlarmStats>('/screen/alarm-stats'),
-  efficiency: () => get<EfficiencyStats>('/screen/efficiency'),
+  segmentStats: (range?: DateRange) => get<SegmentStats>('/screen/segment-stats', { params: range }),
+  alarmStats:   (range?: DateRange) => get<AlarmStats>('/screen/alarm-stats',     { params: range }),
+  efficiency:   (range?: DateRange) => get<EfficiencyStats>('/screen/efficiency',  { params: range }),
 }

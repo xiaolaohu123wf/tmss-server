@@ -54,17 +54,20 @@ class RegisterHandler:
         # 查询或创建设备记录
         row = await _device_repo.find_by_imei(conn, imei)
         if row is None:
+            # 从未见过，自动创建
             device_id = await _device_repo.create(conn, imei=imei)
             vehicle_id = None
             fleet_id = None
             await logger.ainfo("device_auto_created", imei=imei, device_id=device_id)
+        elif row.deleted_at is not None:
+            # 设备曾被软删除，但硬件重新上线 → 自动恢复
+            await _device_repo.restore_by_imei(conn, imei)
+            device_id = row.id
+            vehicle_id = None
+            fleet_id = None
+            await logger.ainfo("device_restored", imei=imei, device_id=device_id)
         else:
             device_id = row.id
-            if row.deleted_at is not None:
-                await _device_repo.restore_soft_deleted(conn, device_id)
-                await logger.ainfo(
-                    "device_restored_soft_deleted", imei=imei, device_id=device_id
-                )
             # 查询当前绑定及车牌
             bind = await _device_repo.get_active_bind_by_device(conn, device_id)
             vehicle_id = bind.vehicle_id if bind else None
