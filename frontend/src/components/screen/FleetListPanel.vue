@@ -52,7 +52,10 @@ const vehicleList = computed(() =>
         @click="emit('select-vehicle', v)"
       >
         <span :class="['dot', v.online ? 'online' : 'offline']" />
-        <span class="plate">{{ v.license_plate }}</span>
+        <div class="veh-main">
+          <span class="plate">{{ v.license_plate }}</span>
+          <span v-if="v.driver_phone" class="veh-phone">{{ v.driver_phone }}</span>
+        </div>
         <span class="fleet-name">{{ v.fleet_name ?? '—' }}</span>
         <span :class="['state-badge', v.online ? 'on' : 'off']">
           {{ v.online ? '在线' : '离线' }}
@@ -109,6 +112,12 @@ const vehicleList = computed(() =>
 .dot.offline { background: #4b5563; }
 
 .plate { font-size: 12px; font-weight: 600; color: #e0f0ff; min-width: 80px; }
+.veh-main {
+  display: flex; flex-direction: column; gap: 1px; min-width: 72px; flex-shrink: 0;
+}
+.veh-phone {
+  font-size: 10px; color: rgba(125, 211, 252, 0.85); font-variant-numeric: tabular-nums;
+}
 .fleet-name { font-size: 11px; color: rgba(150,200,240,.6); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .state-badge {
   font-size: 10px; padding: 1px 6px; border-radius: 10px; flex-shrink: 0;

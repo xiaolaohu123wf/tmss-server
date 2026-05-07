@@ -385,7 +385,7 @@ async function onTabChange(pane: { paneName: string }) {
             <el-option
               v-for="v in bindableVehicles"
               :key="v.id"
-              :label="`${v.license_plate}${v.driver_name ? ' · ' + v.driver_name : ''}`"
+              :label="`${v.license_plate}${v.driver_name ? ' · ' + v.driver_name : ''}${v.driver_phone ? ' · ' + v.driver_phone : ''}`"
               :value="v.id"
             />
           </el-select>

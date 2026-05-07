@@ -32,6 +32,7 @@ const form = ref<VehicleCreate & { id?: number }>({
   fleet_id: undefined,
   load_capacity: undefined,
   driver_name: '',
+  driver_phone: '',
   notes: '',
 })
 
@@ -89,6 +90,7 @@ function openCreate() {
     fleet_id: undefined,
     load_capacity: undefined,
     driver_name: '',
+    driver_phone: '',
     notes: '',
   }
   dialogVisible.value = true
@@ -103,6 +105,7 @@ function openEdit(row: Vehicle) {
     fleet_id: row.fleet_id ?? undefined,
     load_capacity: row.load_capacity ?? undefined,
     driver_name: row.driver_name ?? '',
+    driver_phone: row.driver_phone ?? '',
     notes: row.notes ?? '',
   }
   dialogVisible.value = true
@@ -216,6 +219,12 @@ watch(vehicles, () => { void scrollToHighlight() })
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
+      <el-table-column v-if="!isMobile" label="驾驶员电话" width="118">
+        <template #default="{ row }">
+          <span v-if="row.driver_phone">{{ row.driver_phone }}</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="所属车队" min-width="80">
         <template #default="{ row }">
           <span v-if="row.fleet_name">{{ row.fleet_name }}</span>
@@ -257,6 +266,9 @@ watch(vehicles, () => { void scrollToHighlight() })
         </el-form-item>
         <el-form-item label="驾驶员">
           <el-input v-model="form.driver_name" placeholder="请输入驾驶员姓名（可选）" clearable />
+        </el-form-item>
+        <el-form-item label="驾驶员电话">
+          <el-input v-model="form.driver_phone" placeholder="手机号（可选）" maxlength="30" clearable />
         </el-form-item>
         <el-form-item v-if="authStore.isManager" label="所属车队">
           <el-select v-model="form.fleet_id" placeholder="选择车队（可选）" clearable style="width: 100%">

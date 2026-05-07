@@ -543,7 +543,7 @@ onUnmounted(() => {
             <el-option
               v-for="v in vehicles"
               :key="v.id"
-              :label="v.license_plate"
+              :label="`${v.license_plate}${v.driver_phone ? ' · ' + v.driver_phone : ''}`"
               :value="v.id"
             />
           </el-select>

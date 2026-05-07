@@ -26,6 +26,7 @@ class VehicleRow:
     load_capacity: Optional[Decimal]
     notes: Optional[str]
     driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
     fleet_name: Optional[str] = None
     device_id: Optional[int] = None
     device_imei: Optional[str] = None
@@ -60,9 +61,10 @@ class VehicleRepo:
         load_capacity: Optional[Decimal] = None,
         notes: Optional[str] = None,
         driver_name: Optional[str] = None,
+        driver_phone: Optional[str] = None,
     ) -> int:
         vehicle_id: int = await conn.fetchval(
-            INSERT_VEHICLE_SQL, fleet_id, license_plate, vehicle_type, load_capacity, notes, driver_name,
+            INSERT_VEHICLE_SQL, fleet_id, license_plate, vehicle_type, load_capacity, notes, driver_name, driver_phone,
         )
         return vehicle_id
 
@@ -76,10 +78,11 @@ class VehicleRepo:
         notes: Optional[str] = None,
         fleet_id: Optional[int] = None,
         driver_name: Optional[str] = None,
+        driver_phone: Optional[str] = None,
     ) -> None:
         await conn.execute(
             UPDATE_VEHICLE_SQL,
-            vehicle_id, license_plate, vehicle_type, load_capacity, notes, fleet_id, driver_name,
+            vehicle_id, license_plate, vehicle_type, load_capacity, notes, fleet_id, driver_name, driver_phone,
         )
 
     async def soft_delete(
@@ -100,6 +103,7 @@ def _to_vehicle_row(row: asyncpg.Record) -> VehicleRow:  # type: ignore[type-arg
         load_capacity=row["load_capacity"],
         notes=row["notes"],
         driver_name=row["driver_name"] if "driver_name" in keys else None,
+        driver_phone=row["driver_phone"] if "driver_phone" in keys else None,
         fleet_name=row["fleet_name"] if "fleet_name" in keys else None,
         device_id=row["device_id"] if "device_id" in keys else None,
         device_imei=row["device_imei"] if "device_imei" in keys else None,

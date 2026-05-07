@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class VehicleCreate(BaseModel):
@@ -12,7 +12,16 @@ class VehicleCreate(BaseModel):
     load_capacity: Optional[Decimal] = None
     fleet_id: Optional[int] = None
     driver_name: Optional[str] = Field(default=None, max_length=50)
+    driver_phone: Optional[str] = Field(default=None, max_length=30)
     notes: Optional[str] = None
+
+    @field_validator('driver_phone', mode='before')
+    @classmethod
+    def _phone_blank_none(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
 
     @model_validator(mode="after")
     def passenger_car_clears_load(self) -> VehicleCreate:
@@ -27,7 +36,16 @@ class VehicleUpdate(BaseModel):
     load_capacity: Optional[Decimal] = None
     fleet_id: Optional[int] = None
     driver_name: Optional[str] = Field(default=None, max_length=50)
+    driver_phone: Optional[str] = Field(default=None, max_length=30)
     notes: Optional[str] = Field(default=None, max_length=50)
+
+    @field_validator('driver_phone', mode='before')
+    @classmethod
+    def _phone_blank_none_u(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
 
     @model_validator(mode="after")
     def passenger_car_clears_load(self) -> VehicleUpdate:
@@ -44,6 +62,7 @@ class VehicleResponse(BaseModel):
     vehicle_type: str
     load_capacity: Optional[Decimal]
     driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
     device_id: Optional[int] = None
     device_imei: Optional[str] = None
     notes: Optional[str]

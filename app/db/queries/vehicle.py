@@ -1,6 +1,6 @@
 _VEHICLE_SELECT = """
     SELECT v.id, v.fleet_id, v.license_plate, v.vehicle_type,
-           v.load_capacity, v.notes, v.driver_name, v.created_at,
+           v.load_capacity, v.notes, v.driver_name, v.driver_phone, v.created_at,
            f.name  AS fleet_name,
            dvb.vehicle_id IS NOT NULL AS has_device,
            d.id    AS device_id,
@@ -31,8 +31,8 @@ SELECT_VEHICLE_BY_ID_SQL = _VEHICLE_SELECT + """
 """
 
 INSERT_VEHICLE_SQL = """
-    INSERT INTO vehicle (fleet_id, license_plate, vehicle_type, load_capacity, notes, driver_name)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO vehicle (fleet_id, license_plate, vehicle_type, load_capacity, notes, driver_name, driver_phone)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING id
 """
 
@@ -46,7 +46,8 @@ UPDATE_VEHICLE_SQL = """
         END,
         notes         = COALESCE($5, notes),
         fleet_id      = COALESCE($6, fleet_id),
-        driver_name   = $7
+        driver_name   = $7,
+        driver_phone  = $8
     WHERE id = $1
       AND deleted_at IS NULL
 """

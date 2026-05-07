@@ -101,6 +101,7 @@ export interface Vehicle {
   vehicle_type: VehicleType
   load_capacity: number | null
   driver_name: string | null
+  driver_phone: string | null
   device_id: number | null
   device_imei: string | null
   notes: string | null
@@ -113,6 +114,7 @@ export interface VehicleCreate {
   vehicle_type: VehicleType
   load_capacity?: number
   driver_name?: string
+  driver_phone?: string
   notes?: string
 }
 
@@ -121,6 +123,9 @@ export interface VehicleUpdate {
   vehicle_type?: VehicleType
   load_capacity?: number
   fleet_id?: number
+  driver_name?: string
+  driver_phone?: string
+  notes?: string
 }
 
 // ────────────────────────────────────────────────────────────
