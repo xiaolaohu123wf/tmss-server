@@ -40,6 +40,7 @@ run_docker gdal2tiles.py \
   --tilesize=256 \
   --tiledriver=PNG \
   --resampling=bilinear \
+  --exclude \
   "$WARPED" "$OUTDIR"
 
 echo "[tile_dom_gcj_amap] done. Open backend /orthophoto-test (requires tiles + meta)."

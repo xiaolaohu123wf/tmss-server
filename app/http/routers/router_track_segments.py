@@ -11,7 +11,6 @@ from app.cache.session_repo import SessionData
 from app.core.enums import UserRole
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.db.deps import get_db_conn
-from app.db.repos.business_config_repo import BusinessConfigRepo
 from app.db.repos.track_query_repo import TrackQueryRepo
 from app.http.deps import require_fleet_or_above, require_manager
 from app.http.response import ok
@@ -19,11 +18,9 @@ from app.services.geofence_service import get_zones_at, wgs84_to_gcj02
 
 router = APIRouter(prefix="/api/track-segments", tags=["track-segments"])
 _repo = TrackQueryRepo()
-_cfg_repo = BusinessConfigRepo()
 
-# 运输段默认缓冲分钟数（从业务配置读取；此为硬编码回退值）
-_DEFAULT_BUFFER_MIN = 3
 _TRANSPORT_TYPES = frozenset(["transport_loaded", "transport_empty"])
+_TRANSPORT_BUFFER_MIN = 3  # 运输段两端各扩展 3 分钟，展示完整驶入/驶出轨迹
 
 
 def _fleet_filter(session: SessionData) -> Optional[int]:
@@ -132,10 +129,6 @@ async def list_track_segments(
     if to.tzinfo is None:
         to = to.replace(tzinfo=timezone.utc)
 
-    # 读取业务配置以获取 segment_buffer_min
-    cfg = await _cfg_repo.get_singleton(conn)
-    seg_buffer_min: int = cfg.segment_buffer_min if cfg else _DEFAULT_BUFFER_MIN
-
     ff = _fleet_filter(session)
     internal_limit = min(limit * 4, 500)
     rows = await _repo.list_segments(
@@ -183,8 +176,7 @@ async def list_track_segments(
             else (None, None)
         )
 
-        # 运输段附带缓冲分钟数，前端查询 points 时使用
-        buf = seg_buffer_min if r.segment_type in _TRANSPORT_TYPES else 0
+        buf = _TRANSPORT_BUFFER_MIN if r.segment_type in _TRANSPORT_TYPES else 0
 
         item = TrackSegmentListItem(
             id=r.id,

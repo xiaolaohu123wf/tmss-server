@@ -205,6 +205,21 @@ class SegmentFSM:
         if self.seg_type is None:
             self._open("unknown", recorded_at, lat, lng, vehicle_id)
 
+        # ── GPS 时间跳变检测：间隔 ≥ 停车阈值 → 强制切段 ─────────────────
+        elif (
+            self.last_at is not None
+            and (recorded_at - self.last_at).total_seconds() / 60.0 >= park_threshold_min
+        ):
+            self._close(self.last_at, self.last_lat, self.last_lng)
+            self._open("unknown", recorded_at, lat, lng, vehicle_id)
+            self.zone_entry_id = None
+            self.zone_entry_at = None
+            self.transport_started_at = None
+            self.anchor_lat = None
+            self.anchor_lng = None
+            self.anchor_since = None
+            # 继续处理围栏逻辑（当前包可能已在工作区域）
+
         # ── 围栏区域逻辑 ──────────────────────────────────────────────────
         if active_zone:
             zone_type = "loading" if loading_zone else "unloading"

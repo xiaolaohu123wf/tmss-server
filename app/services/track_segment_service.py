@@ -106,6 +106,43 @@ async def _process_locked(
         await _recover_or_open_unknown(state, lat, lng, recorded_at, conn)
         return  # 本次包直接归入恢复/新建的段
 
+    # ── GPS 时间跳变检测：间隔 ≥ 停车阈值 → 强制切段 ─────────────────────
+    if (
+        state.last_point_at is not None
+        and (recorded_at - state.last_point_at).total_seconds() / 60.0 >= park_threshold_min
+    ):
+        last_lat = state.last_point_lat or lat
+        last_lng = state.last_point_lng or lng
+        await _close_segment(
+            state, ended_at=state.last_point_at, end_lat=last_lat, end_lng=last_lng, conn=conn
+        )
+        seg_id = await _ts_repo.open_segment(
+            conn,
+            device_id=state.device_id,
+            started_at=recorded_at,
+            start_lat=lat,
+            start_lng=lng,
+            vehicle_id=state.vehicle_id,
+            segment_type="unknown",
+        )
+        state.current_segment_id = seg_id
+        state.current_segment_type = "unknown"
+        state.transport_started_at = None
+        state.zone_entry_id = None
+        state.zone_entry_at = None
+        state.zone_entry_lat = None
+        state.zone_entry_lng = None
+        state.stationary_anchor_lat = lat
+        state.stationary_anchor_lng = lng
+        state.stationary_since = recorded_at
+        await logger.ainfo(
+            "segment_time_gap_split",
+            device_id=state.device_id,
+            seg_id=seg_id,
+            gap_min=round((recorded_at - state.last_point_at).total_seconds() / 60.0, 1),
+        )
+        # 重置后继续处理围栏逻辑（当前包可能已在工作区域）
+
     # ── 围栏区域逻辑 ──────────────────────────────────────────────────────
     if active_zone:
         zone_type = "loading" if loading_zone else "unloading"

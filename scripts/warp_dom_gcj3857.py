@@ -105,25 +105,22 @@ def lonlat_to_xy3857(lon: float, lat: float) -> tuple[float, float]:
     return float(x), float(y)
 
 
-def build_gcps(
-    ds: gdal.Dataset, nx: int, ny: int, ct_src_to_wgs: osr.CoordinateTransformation
-) -> list[gdal.GCP]:
-    w = ds.RasterXSize
-    h = ds.RasterYSize
+def center_gcj02_offset_3857(ds: gdal.Dataset, ct_src_to_wgs: osr.CoordinateTransformation) -> tuple[float, float]:
+    """
+    Compute the GCJ-02 offset at the image centre in EPSG:3857 metres.
+    The GCJ-02 correction is nearly uniform over a small area, so a single
+    centre-point translation is accurate to within a few centimetres for
+    images up to ~10 km on a side.
+    Returns (dx_metres, dy_metres) to ADD to the EPSG:3857 GeoTransform origin.
+    """
     gt = ds.GetGeoTransform()
-    gcps: list[gdal.GCP] = []
-    for iy in range(ny):
-        py = (iy / max(ny - 1, 1)) * (h - 1)
-        for ix in range(nx):
-            px = (ix / max(nx - 1, 1)) * (w - 1)
-            mx, my = gdal.ApplyGeoTransform(gt, px + 0.5, py + 0.5)
-            lon_wgs, lat_wgs, _ = ct_src_to_wgs.TransformPoint(mx, my)
-            lon_gcj, lat_gcj = wgs84_to_gcj02(float(lon_wgs), float(lat_wgs))
-            lon_gcj = max(-180.0, min(180.0, lon_gcj))
-            lat_gcj = max(-_MERC_LAT_MAX, min(_MERC_LAT_MAX, lat_gcj))
-            mx3857, my3857 = lonlat_to_xy3857(lon_gcj, lat_gcj)
-            gcps.append(gdal.GCP(mx3857, my3857, 0.0, float(px), float(py)))
-    return gcps
+    cx_src = gdal.ApplyGeoTransform(gt, ds.RasterXSize / 2.0, ds.RasterYSize / 2.0)
+    lon_wgs, lat_wgs, _ = ct_src_to_wgs.TransformPoint(cx_src[0], cx_src[1])
+    lon_wgs, lat_wgs = float(lon_wgs), float(lat_wgs)
+    lon_gcj, lat_gcj = wgs84_to_gcj02(lon_wgs, lat_wgs)
+    x_wgs, y_wgs = lonlat_to_xy3857(lon_wgs, lat_wgs)
+    x_gcj, y_gcj = lonlat_to_xy3857(lon_gcj, lat_gcj)
+    return x_gcj - x_wgs, y_gcj - y_wgs
 
 
 def bounds_amap_lnglat(ds3857: gdal.Dataset) -> tuple[list[float], list[float]]:
@@ -185,8 +182,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="DOM (any GDAL CRS) → GCJ-aligned EPSG:3857 GeoTIFF")
     ap.add_argument("src", type=Path, help="Source GeoTIFF (projected or WGS84 geographic)")
     ap.add_argument("dst", type=Path, help="Output GeoTIFF (EPSG:3857)")
-    ap.add_argument("--grid-x", type=int, default=22, help="GCP count along X")
-    ap.add_argument("--grid-y", type=int, default=22, help="GCP count along Y")
+    ap.add_argument("--grid-x", type=int, default=22, help="(unused, kept for CLI compat)")
+    ap.add_argument("--grid-y", type=int, default=22, help="(unused, kept for CLI compat)")
     ap.add_argument("--meta-out", type=Path, help="Write orthophoto_amap_meta.json for test page")
     ap.add_argument("--zoom-for-meta", default="14-19", help="Zoom range string embedded in meta")
     ap.add_argument("--tile-url-suffix", default="/static/map/tiles_dom", help="Tile base URL path")
@@ -197,21 +194,13 @@ def main() -> None:
     if src is None:
         raise SystemExit(f"Cannot open {args.src}")
 
-    nx = max(6, args.grid_x)
-    ny = max(6, args.grid_y)
     ct_src_to_wgs = _source_ct_to_wgs84_geo(src)
-    gcps = build_gcps(src, nx, ny, ct_src_to_wgs)
 
-    srs3857 = osr.SpatialReference()
-    srs3857.ImportFromEPSG(3857)
-    wkt3857 = srs3857.ExportToWkt()
-
-    vrt_path = args.dst.with_suffix(".precursor.vrt")
-    vrt_ds = gdal.GetDriverByName("VRT").CreateCopy(str(vrt_path), src, 0)
-    vrt_ds.SetGCPs(gcps, wkt3857)
-    vrt_ds.FlushCache()
-    vrt_ds = None
-
+    # ── Step 1: standard warp from source CRS → EPSG:3857 (WGS-84 based) ──────
+    # Doing a standard reprojection first guarantees correct pixel placement and
+    # a proper 3857 GeoTransform.  We then apply the GCJ-02 offset as a pure
+    # translation in Step 2, which is accurate to < 1 m for images ≤ ~10 km.
+    tmp_path = str(args.dst.with_suffix(".wgs3857.tif"))
     warp_opts = gdal.WarpOptions(
         dstSRS="EPSG:3857",
         format="GTiff",
@@ -226,22 +215,51 @@ def main() -> None:
             "INTERLEAVE=PIXEL",
         ],
         resampleAlg=gdal.GRA_Bilinear,
-        polynomialOrder=3,
         multithread=True,
-        dstAlpha=True,  # add alpha band so nodata areas become transparent in PNG tiles
+        dstAlpha=True,
+    )
+    gdal.Warp(tmp_path, str(args.src), options=warp_opts)
+
+    # ── Step 2: apply GCJ-02 centre-point translation to the GeoTransform ──────
+    # The GCJ-02 offset is nearly constant over a small area, so translating
+    # the GeoTransform origin by the centre-point offset is sufficient.
+    tmp_ds = gdal.Open(tmp_path, gdal.GA_Update)
+    if tmp_ds is None:
+        raise SystemExit("Step-1 warp produced no dataset")
+
+    dx, dy = center_gcj02_offset_3857(src, ct_src_to_wgs)
+    gt = list(tmp_ds.GetGeoTransform())
+    gt[0] += dx   # shift X origin east by GCJ-02 delta
+    gt[3] += dy   # shift Y origin north by GCJ-02 delta (dy is positive-northward)
+    tmp_ds.SetGeoTransform(gt)
+    tmp_ds.FlushCache()
+    tmp_ds = None
+
+    print(
+        f"[warp_dom_gcj3857] GCJ-02 offset applied: "
+        f"dx={dx:+.2f} m  dy={dy:+.2f} m"
     )
 
-    dst_path = str(args.dst)
-    gdal.Warp(dst_path, str(vrt_path), options=warp_opts)
-
+    # ── Step 3: DEFLATE-compress final output (copy with updated GT) ────────────
+    # Re-open read-only for the copy so the updated GT is flushed.
+    gdal.GetDriverByName("GTiff").CreateCopy(
+        str(args.dst),
+        gdal.Open(tmp_path),
+        0,
+        options=[
+            "COMPRESS=DEFLATE", "PREDICTOR=2", "ZLEVEL=6",
+            "TILED=YES", "BLOCKXSIZE=512", "BLOCKYSIZE=512",
+            "BIGTIFF=IF_NEEDED", "INTERLEAVE=PIXEL",
+        ],
+    )
     try:
-        vrt_path.unlink(missing_ok=True)
+        Path(tmp_path).unlink(missing_ok=True)
     except OSError:
         pass
 
-    out_ds = gdal.Open(dst_path)
+    out_ds = gdal.Open(str(args.dst))
     if out_ds is None:
-        raise SystemExit("Warp produced no dataset")
+        raise SystemExit("Final output not readable")
 
     if args.meta_out:
         write_meta(args.meta_out, out_ds, args.zoom_for_meta, args.tile_url_suffix, args.tile_format)

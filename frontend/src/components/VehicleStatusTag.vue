@@ -6,8 +6,8 @@ type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary' | undefined
 const props = defineProps<{ state: WorkState | null | undefined }>()
 
 const stateMap: Record<WorkState, { label: string; type: TagType }> = {
-  loading:          { label: '装料中',   type: 'warning' },
-  unloading:        { label: '卸料中',   type: 'success' },
+  loading:          { label: '装料中',   type: 'success' },
+  unloading:        { label: '卸料中',   type: 'warning' },
   transport_loaded: { label: '重载运输', type: 'danger'  },
   transport_empty:  { label: '空载运输', type: 'info'    },
   unknown:          { label: '未知',     type: undefined },

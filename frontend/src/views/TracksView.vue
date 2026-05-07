@@ -304,7 +304,6 @@ async function onRowClick(row: TrackRow, _col: unknown, evt: Event) {
   playing.value = false
   stopPlayTimer()
   try {
-    // 运输段（重载/空载）附带缓冲分钟：在段起止各扩展 buffer_min 分钟以展示完整轨迹
     const bufMin = row.buffer_min > 0 ? row.buffer_min : undefined
     const raw = await tracksApi.points(row.id, 25000, bufMin)
     // LBS 基站定位精度差，不参与轨迹回放
@@ -561,6 +560,7 @@ onUnmounted(() => {
           highlight-current-row
           :row-key="(r: TrackRow) => r.id"
           :current-row-key="selectedId ?? undefined"
+          :row-class-name="({ row }: { row: TrackRow }) => row.id === selectedId ? 'track-row--active' : ''"
           @row-click="onRowClick"
         >
           <el-table-column prop="license_plate" label="车牌" width="100" />
@@ -770,6 +770,17 @@ onUnmounted(() => {
   --el-tag-bg-color: #f5f5f5;
   --el-tag-border-color: #d9d9d9;
   --el-tag-text-color: #8c8c8c;
+}
+
+/* 选中行：蓝色左边框 + 浅蓝背景，覆盖 stripe 和默认 current-row 样式 */
+:deep(.el-table__row.track-row--active) td.el-table__cell {
+  background-color: #e6f4ff !important;
+}
+:deep(.el-table__row.track-row--active) td.el-table__cell:first-child {
+  border-left: 3px solid #1890ff;
+}
+:deep(.el-table__row.track-row--active) {
+  font-weight: 500;
 }
 .cell-stack {
   display: flex;
