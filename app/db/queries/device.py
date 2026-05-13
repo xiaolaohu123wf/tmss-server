@@ -29,17 +29,25 @@ SELECT_ALL_DEVICES_SQL = """
     LEFT JOIN device_vehicle_bind dvb
            ON dvb.device_id = d.id AND dvb.unbound_at IS NULL
     LEFT JOIN vehicle v
-           ON v.id = dvb.vehicle_id AND v.deleted_at IS NULL
+           ON v.id = dvb.vehicle_id
     WHERE d.deleted_at IS NULL
     ORDER BY d.id DESC
 """
 
+# 强依赖复合索引：CREATE INDEX CONCURRENTLY idx_lp_device_time
+#   ON location_point (device_id, recorded_at DESC);
+# 有该索引时，LATERAL + LIMIT 1 对每台设备做独立 Index Scan，
+# 比全量 DISTINCT ON 少扫描几个数量级的行数。
 SELECT_LATEST_LOCATION_PER_DEVICE_SQL = """
-    SELECT DISTINCT ON (lp.device_id)
-           lp.device_id, lp.loc_type, lp.lat, lp.lng, lp.speed, lp.recorded_at
-    FROM   location_point lp
-    WHERE  lp.device_id = ANY($1::int[])
-    ORDER  BY lp.device_id, lp.recorded_at DESC
+    SELECT lp.device_id, lp.loc_type, lp.lat, lp.lng, lp.speed, lp.recorded_at
+    FROM   unnest($1::int[]) AS ids(device_id)
+    CROSS  JOIN LATERAL (
+        SELECT device_id, loc_type, lat, lng, speed, recorded_at
+        FROM   location_point
+        WHERE  device_id = ids.device_id
+        ORDER  BY recorded_at DESC
+        LIMIT  1
+    ) lp
 """
 
 UPDATE_DEVICE_METADATA_SQL = """
@@ -107,6 +115,28 @@ UNBIND_SQL = """
     SET unbound_at = NOW()
     WHERE device_id = $1
       AND unbound_at IS NULL
+"""
+
+UNBIND_BY_VEHICLE_SQL = """
+    UPDATE device_vehicle_bind
+    SET unbound_at = NOW()
+    WHERE vehicle_id = $1
+      AND unbound_at IS NULL
+"""
+
+SELECT_DEVICES_BY_FLEET_SQL = """
+    SELECT d.id, d.imei, d.iccid, d.model, d.firmware_version, d.notes, d.created_at,
+           dvb.vehicle_id,
+           v.license_plate AS vehicle_license,
+           v.fleet_id      AS fleet_id
+    FROM device d
+    INNER JOIN device_vehicle_bind dvb
+           ON dvb.device_id = d.id AND dvb.unbound_at IS NULL
+    INNER JOIN vehicle v
+           ON v.id = dvb.vehicle_id
+    WHERE d.deleted_at IS NULL
+      AND v.fleet_id = $1
+    ORDER BY d.id DESC
 """
 
 SELECT_UNBOUND_DEVICES_SQL = """

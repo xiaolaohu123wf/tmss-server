@@ -125,7 +125,9 @@ class ConnectionHandler:
         try:
             while True:
                 try:
-                    chunk = await asyncio.wait_for(self._reader.read(4096), timeout=120)
+                    # 全量状态包最大上报间隔可达 150s，超时需 > 150s；
+                    # 设为 300s（5 分钟），与 segment_sweeper 扫描周期对齐。
+                    chunk = await asyncio.wait_for(self._reader.read(4096), timeout=300)
                 except asyncio.TimeoutError:
                     await logger.ainfo("tcp_read_timeout", peer=self._peer)
                     break

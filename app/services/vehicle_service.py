@@ -7,7 +7,7 @@ import asyncpg
 
 from app.cache.session_repo import SessionData
 from app.core.enums import UserRole
-from app.core.exceptions import NotFoundError, PermissionDeniedError
+from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.db.repos.vehicle_repo import VehicleRepo, VehicleRow
 from app.models.http_vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 
@@ -63,16 +63,19 @@ class VehicleService:
         if session.role == UserRole.FLEET_CAPTAIN:
             fleet_id = session.fleet_id
 
-        new_id = await _repo.create(
-            conn,
-            fleet_id=fleet_id,
-            license_plate=body.license_plate,
-            vehicle_type=body.vehicle_type,
-            load_capacity=body.load_capacity,
-            notes=body.notes,
-            driver_name=body.driver_name,
-            driver_phone=body.driver_phone,
-        )
+        try:
+            new_id = await _repo.create(
+                conn,
+                fleet_id=fleet_id,
+                license_plate=body.license_plate,
+                vehicle_type=body.vehicle_type,
+                load_capacity=body.load_capacity,
+                notes=body.notes,
+                driver_name=body.driver_name,
+                driver_phone=body.driver_phone,
+            )
+        except asyncpg.UniqueViolationError:
+            raise ConflictError(f"车牌 {body.license_plate} 已存在")
         row = await _repo.find_by_id(conn, new_id)
         assert row is not None
         return _to_response(row)
@@ -89,16 +92,19 @@ class VehicleService:
             raise NotFoundError("车辆不存在")
         _check_fleet_access(row.fleet_id, session)
 
-        await _repo.update(
-            conn, vehicle_id,
-            license_plate=body.license_plate,
-            vehicle_type=body.vehicle_type,
-            load_capacity=body.load_capacity,
-            notes=body.notes,
-            fleet_id=body.fleet_id if session.role == UserRole.MANAGER else None,
-            driver_name=body.driver_name,
-            driver_phone=body.driver_phone,
-        )
+        try:
+            await _repo.update(
+                conn, vehicle_id,
+                license_plate=body.license_plate,
+                vehicle_type=body.vehicle_type,
+                load_capacity=body.load_capacity,
+                notes=body.notes,
+                fleet_id=body.fleet_id if session.role == UserRole.MANAGER else None,
+                driver_name=body.driver_name,
+                driver_phone=body.driver_phone,
+            )
+        except asyncpg.UniqueViolationError:
+            raise ConflictError(f"车牌 {body.license_plate} 已存在")
         updated = await _repo.find_by_id(conn, vehicle_id)
         assert updated is not None
         return _to_response(updated)

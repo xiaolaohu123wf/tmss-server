@@ -35,8 +35,11 @@ async def list_devices(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
+    # 车队长只能看到本车队已绑定车辆的设备；manager 可查全部
     if unbound:
         rows = await _repo.find_unbound(conn)
+    elif session.role == UserRole.FLEET_CAPTAIN and session.fleet_id is not None:
+        rows = await _repo.find_by_fleet(conn, session.fleet_id)
     else:
         rows = await _repo.find_all(conn)
 
@@ -106,16 +109,20 @@ async def bind_device(
         if vehicle_row["fleet_id"] != session.fleet_id:
             raise PermissionDeniedError("只能绑定本车队的车辆")
 
-    await _repo.unbind(conn, device_id)
-    bind_id = await _repo.bind(
-        conn, device_id, body.vehicle_id,
-        driver_id=body.driver_id,
-        operator=body.operator or session.username,
-    )
-    fleet_row = await conn.fetchrow(
-        "SELECT fleet_id, license_plate FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
-        body.vehicle_id,
-    )
+    async with conn.transaction():
+        # 解除该设备当前的旧车辆绑定（若有）
+        await _repo.unbind(conn, device_id)
+        # 解除目标车辆当前的旧设备绑定（若有），防止一辆车出现多条活跃绑定
+        await _repo.unbind_by_vehicle(conn, body.vehicle_id)
+        bind_id = await _repo.bind(
+            conn, device_id, body.vehicle_id,
+            driver_id=body.driver_id,
+            operator=body.operator or session.username,
+        )
+        fleet_row = await conn.fetchrow(
+            "SELECT fleet_id, license_plate FROM vehicle WHERE id = $1 AND deleted_at IS NULL",
+            body.vehicle_id,
+        )
     fleet_id = fleet_row["fleet_id"] if fleet_row else None
     license_plate = fleet_row["license_plate"] if fleet_row else None
     await device_registry.update_binding(device_id, body.vehicle_id, fleet_id, license_plate)

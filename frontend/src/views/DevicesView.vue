@@ -218,9 +218,10 @@ async function onTabChange(pane: { paneName: string }) {
         <el-table-column v-if="!isMobile" label="ICCID" prop="iccid" min-width="150">
           <template #default="{ row }"><span class="mono small">{{ row.iccid ?? '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="绑定车辆" :width="isMobile ? 80 : 110">
+        <el-table-column label="绑定车辆" :width="isMobile ? 80 : 120">
           <template #default="{ row }">
             <span v-if="row.vehicle_license" class="plate">{{ row.vehicle_license }}</span>
+            <el-tag v-else-if="row.vehicle_id" type="warning" size="small">车辆已删除</el-tag>
             <el-tag v-else type="info" size="small">—</el-tag>
           </template>
         </el-table-column>
@@ -228,6 +229,7 @@ async function onTabChange(pane: { paneName: string }) {
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="primary" :disabled="!row.online" @click="openCommand(row)">下发指令</el-button>
+            <el-button v-if="!row.vehicle_id" link type="success" @click="openBind(row)">绑定</el-button>
             <el-button v-if="row.vehicle_id" link type="warning" @click="handleUnbind(row)">解绑</el-button>
             <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -251,6 +253,7 @@ async function onTabChange(pane: { paneName: string }) {
             <el-table-column label="绑定车辆" :width="isMobile ? 80 : 120">
               <template #default="{ row }">
                 <span v-if="row.vehicle_license" class="plate">{{ row.vehicle_license }}</span>
+                <el-tag v-else-if="row.vehicle_id" type="warning" size="small">车辆已删除</el-tag>
                 <el-tag v-else type="info" size="small">—</el-tag>
               </template>
             </el-table-column>

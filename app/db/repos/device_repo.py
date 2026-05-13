@@ -16,9 +16,11 @@ from app.db.queries.device import (
     SELECT_ALL_DEVICES_SQL,
     SELECT_DEVICE_BY_ID_SQL,
     SELECT_DEVICE_BY_IMEI_SQL,
+    SELECT_DEVICES_BY_FLEET_SQL,
     SELECT_LATEST_LOCATION_PER_DEVICE_SQL,
     SELECT_UNBOUND_DEVICES_SQL,
     SOFT_DELETE_DEVICE_SQL,
+    UNBIND_BY_VEHICLE_SQL,
     UNBIND_SQL,
     UPDATE_DEVICE_FIRMWARE_SQL,
     UPDATE_DEVICE_METADATA_SQL,
@@ -76,6 +78,12 @@ class DeviceRepo:
         self, conn: asyncpg.Connection  # type: ignore[type-arg]
     ) -> list[DeviceRow]:
         rows = await conn.fetch(SELECT_ALL_DEVICES_SQL)
+        return [_to_device_row(r) for r in rows]
+
+    async def find_by_fleet(
+        self, conn: asyncpg.Connection, fleet_id: int  # type: ignore[type-arg]
+    ) -> list[DeviceRow]:
+        rows = await conn.fetch(SELECT_DEVICES_BY_FLEET_SQL, fleet_id)
         return [_to_device_row(r) for r in rows]
 
     async def find_unbound(
@@ -205,9 +213,17 @@ class DeviceRepo:
     ) -> None:
         await conn.execute(UNBIND_SQL, device_id)
 
+    async def unbind_by_vehicle(
+        self, conn: asyncpg.Connection, vehicle_id: int  # type: ignore[type-arg]
+    ) -> None:
+        """解除该车辆当前的设备绑定，防止同一辆车出现多条活跃绑定记录。"""
+        await conn.execute(UNBIND_BY_VEHICLE_SQL, vehicle_id)
+
 
 def _to_device_row(row: asyncpg.Record) -> DeviceRow:  # type: ignore[type-arg]
-    keys = row.keys()
+    # asyncpg Record.keys() 返回一次性迭代器，必须先转为 set 再做 in 检查，
+    # 否则第一次 in 遍历后迭代器耗尽，后续所有字段检查均返回 False。
+    keys: set[str] = set(row.keys())
     return DeviceRow(
         id=row["id"],
         imei=row["imei"],

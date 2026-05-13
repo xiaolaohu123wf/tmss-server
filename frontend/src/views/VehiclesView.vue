@@ -113,15 +113,20 @@ function openEdit(row: Vehicle) {
 
 async function handleSubmit() {
   await formRef.value!.validate()
-  if (editingId.value) {
-    await vehiclesApi.update(editingId.value, form.value)
-    ElMessage.success('更新成功')
-  } else {
-    await vehiclesApi.create(form.value)
-    ElMessage.success('创建成功')
+  try {
+    if (editingId.value) {
+      await vehiclesApi.update(editingId.value, form.value)
+      ElMessage.success('更新成功')
+    } else {
+      await vehiclesApi.create(form.value)
+      ElMessage.success('创建成功')
+    }
+    dialogVisible.value = false
+    await loadData()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? e?.message ?? '操作失败'
+    ElMessage.error(msg)
   }
-  dialogVisible.value = false
-  await loadData()
 }
 
 async function handleDelete(row: Vehicle) {
@@ -130,9 +135,14 @@ async function handleDelete(row: Vehicle) {
     confirmButtonText: '删除',
     confirmButtonClass: 'el-button--danger',
   })
-  await vehiclesApi.delete(row.id)
-  ElMessage.success('已删除')
-  await loadData()
+  try {
+    await vehiclesApi.delete(row.id)
+    ElMessage.success('已删除')
+    await loadData()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? e?.message ?? '删除失败'
+    ElMessage.error(msg)
+  }
 }
 
 function openBind(vehicle: Vehicle) {
@@ -144,17 +154,20 @@ function openBind(vehicle: Vehicle) {
 
 async function handleBind() {
   if (!bindVehicleId.value) return
-  if (selectedDeviceId.value) {
-    // POST /api/devices/{device_id}/bind  { vehicle_id }
-    await devicesApi.bind(selectedDeviceId.value, bindVehicleId.value)
-    ElMessage.success('绑定成功')
-  } else if (originalDeviceId.value) {
-    // POST /api/devices/{device_id}/unbind
-    await devicesApi.unbind(originalDeviceId.value)
-    ElMessage.success('已解绑')
+  try {
+    if (selectedDeviceId.value) {
+      await devicesApi.bind(selectedDeviceId.value, bindVehicleId.value)
+      ElMessage.success('绑定成功')
+    } else if (originalDeviceId.value) {
+      await devicesApi.unbind(originalDeviceId.value)
+      ElMessage.success('已解绑')
+    }
+    bindDialogVisible.value = false
+    await loadData()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? e?.message ?? '操作失败'
+    ElMessage.error(msg)
   }
-  bindDialogVisible.value = false
-  await loadData()
 }
 
 const unboundDevices = computed(() =>
