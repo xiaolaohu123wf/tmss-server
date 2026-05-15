@@ -176,6 +176,7 @@ let trackAnimFrame: number | null = null         // RAF id
 let trackPath: [number, number][] = []           // 当前路径点
 const loadingTrack = ref(false)
 let currentTrackVehicleId: number | null = null  // 正在加载轨迹的车辆 ID，用于取消过期请求
+const TRACK_APPEND_MIN_DELTA = 1e-7              // 约厘米级，过滤重复点抖动
 
 function clearTrack() {
   if (trackAnimFrame !== null) { cancelAnimationFrame(trackAnimFrame); trackAnimFrame = null }
@@ -184,6 +185,17 @@ function clearTrack() {
   trackHead?.setMap(null); trackHead = null
   trackLine?.setMap(null); trackLine = null
   trackPath = []
+}
+
+function appendTrackPoint(point: [number, number]) {
+  if (!trackPath.length || !trackLayers.length) return
+  const last = trackPath[trackPath.length - 1]
+  if (
+    Math.abs(last[0] - point[0]) < TRACK_APPEND_MIN_DELTA
+    && Math.abs(last[1] - point[1]) < TRACK_APPEND_MIN_DELTA
+  ) return
+  trackPath.push(point)
+  trackLayers.forEach(layer => layer.setPath(trackPath))
 }
 
 /** 按 progress(0→1) 插值折线上的坐标 */
@@ -242,6 +254,11 @@ watch(locMsg, (msg) => {
     mk.setContent(markerHtml(plate, state, true))
   }
 
+  // 聚焦车辆在轨迹视图中持续前进时，实时延展高亮轨迹
+  if (props.focusVehicleId === id) {
+    appendTrackPoint([msg.lng, msg.lat])
+  }
+
   // 更新在线 ID
   emit('online-ids', new Set(markers.keys()))
 })
@@ -297,8 +314,8 @@ async function loadTrack(vehicleId: number) {
     const outerGlow = new AMap.Polyline({
       path,
       strokeColor: '#1a8cff',
-      strokeWeight: 18,
-      strokeOpacity: 0.08,
+      strokeWeight: 22,
+      strokeOpacity: 0.11,
       lineJoin: 'round', lineCap: 'round',
       map,
     })
@@ -306,8 +323,8 @@ async function loadTrack(vehicleId: number) {
     const midGlow = new AMap.Polyline({
       path,
       strokeColor: '#1eb8ff',
-      strokeWeight: 7,
-      strokeOpacity: 0.35,
+      strokeWeight: 10,
+      strokeOpacity: 0.42,
       lineJoin: 'round', lineCap: 'round',
       map,
     })
@@ -315,8 +332,8 @@ async function loadTrack(vehicleId: number) {
     const core = new AMap.Polyline({
       path,
       strokeColor: '#7de8ff',
-      strokeWeight: 2,
-      strokeOpacity: 0.95,
+      strokeWeight: 4,
+      strokeOpacity: 1,
       lineJoin: 'round', lineCap: 'round',
       map,
     })

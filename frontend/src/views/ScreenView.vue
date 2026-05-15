@@ -78,7 +78,7 @@ onUnmounted(() => {
       <div class="s-header-right">
         <span class="s-clock">{{ timeStr }}</span>
         <span class="s-user">{{ auth.session?.username }}</span>
-        <button class="s-btn-admin" @click="router.push('/dashboard')">进入后台</button>
+        <button class="s-btn-admin" @click="router.push('/dashboard')">后台</button>
       </div>
     </header>
 

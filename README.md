@@ -8,13 +8,15 @@
 # 1. 复制并填写环境变量
 cp .env.example .env
 
-# 2. 激活 Python 虚拟环境
+# 2. 激活 Python 虚拟环境（若无 `.venv`，先 `python3 -m venv .venv`，再在虚拟环境中根据 `pyproject.toml` 安装依赖）
 source .venv/bin/activate
 
-# 3. 启动 Redis（PostgreSQL 使用已有实例时跳过 --profile local-db）
-docker compose up -d
-# 或同时启动本地 PostgreSQL
-docker compose --profile local-db up -d
+# 3. 启动依赖服务（本机用虚拟环境跑后端时，请勿默认启动 compose 里的 app，否则会占用 8900/8901）
+docker compose up -d redis
+# 使用 Compose 内 PostgreSQL（映射到宿主机 5433，见 docker-compose.yml；.env 中 DATABASE_URL 需用 5433）
+docker compose --profile local-db up -d redis postgres
+# 若整套后端也在容器里跑（则不要再执行下面的 python -m app.main / start.sh）
+# docker compose up -d
 
 # 4. 初始化数据库
 alembic upgrade head
@@ -26,10 +28,10 @@ python -m app.main
 **后台运行（推荐使用 start.sh）：**
 
 ```bash
+bash start.sh restart  # 先停再起（见脚本用法）
 bash start.sh           # 后台启动（日志写入 backend.log，自动加分隔线）
 bash start.sh status    # 查看运行状态与监听端口
 bash start.sh log       # 实时查看日志（tail -f）
-bash start.sh restart   # 重启服务
 bash start.sh stop      # 停止服务
 ```
 
@@ -49,7 +51,7 @@ app/
 alembic/                 # 数据库迁移脚本
 docs/                    # 详细文档
 frontend/                # Vue 3 + Vite 前端
-nginx.conf               # 生产环境 nginx 反向代理配置
+nginx.conf               # 生产环境 nginx（仓库根目录；compose --profile production 挂载）
 ```
 
 ## 文档
@@ -79,6 +81,9 @@ nginx.conf               # 生产环境 nginx 反向代理配置
 ✅ 阶段 10  大屏（高德地图 + SSE + 实时大屏）
 ✅ 阶段 11  历史轨迹查询（轨迹回放 + GCJ-02 转换 + 管理员删除）
 ✅ 阶段 12  系统完善（家用车型 / ICCID 补全 / UI 科技化）
+✅ 阶段 13  作业识别增强（装/卸标注 / 历史重分割 / 大屏等）
+✅ 阶段 14  轨迹分段重构（六类型分段等）
+✅ 阶段 15  大屏与设备一致性（日期筛选 / 轨迹高亮 / IMEI 恢复语义）
 ⬜ 待开发   ECharts 统计图（大屏饼图/折线图）
 ⬜ 待开发   车队长权限 V2（FEATURE_FLEET_CAPTAIN_V2.md）
 ```
@@ -90,3 +95,6 @@ nginx.conf               # 生产环境 nginx 反向代理配置
 | HTTP API（FastAPI） | **8900** |
 | TCP 设备接入 | **8901** |
 | Vite 开发服务器（前端） | **5173** |
+| Redis（docker compose） | **6379** |
+| PostgreSQL（compose `local-db` 映射到宿主机） | **5433** → 容器内 5432 |
+| nginx 静态站（compose `production` profile） | **80** |

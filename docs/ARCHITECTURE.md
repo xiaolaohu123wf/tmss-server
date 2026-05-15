@@ -879,6 +879,7 @@ tmss-server/
 │   │       │                         #   POST /api/admin/resegment-history   全量重分割
 │   │       ├── router_fleets.py      # GET/PATCH /api/fleets/me（车队长自查/编辑）
 │   │       ├── router_track_segments.py  # 轨迹段 CRUD + GCJ-02 坐标转换
+│   │       ├── router_screen.py          # 大屏相关 API
 │   │       ├── router_tcp_messages.py    # 调试：TCP 原始消息环形缓冲
 │   │       └── router_stream.py          # SSE
 │   │
@@ -903,7 +904,11 @@ tmss-server/
 │   │   ├── V003__command_log_speed.py
 │   │   ├── V004__add_map_center.py           # business_config: map_center_lng/lat
 │   │   ├── V005__add_segment_type.py         # track_segment: segment_type
-│   │   └── V006__add_transport_timeout.py    # business_config: transport_timeout_min
+│   │   ├── V006__add_transport_timeout.py    # business_config: transport_timeout_min
+│   │   ├── V007__segment_v2.py
+│   │   ├── V008__add_map_zoom.py
+│   │   ├── V009__update_default_map_view.py
+│   │   └── V010__vehicle_driver_phone.py
 │   ├── env.py
 │   └── alembic.ini
 │

@@ -193,8 +193,10 @@ async def _process_locked(
 
     else:
         # 在围栏外
-        if state.zone_entry_id is not None and state.current_segment_type in _WORK_ZONE_TYPES:
-            # 已确认装/卸料段 → 关闭工作段，开启运输段
+        if state.current_segment_type in _WORK_ZONE_TYPES:
+            # 已确认装/卸料段 → 关闭工作段，开启运输段。
+            # 注意：重连恢复开放段时 zone_entry_id 可能为空，不能以其作为唯一切换条件，
+            # 否则会出现“已离开装料区但仍保持 loading 颜色”的滞留状态。
             prev = state.current_segment_type
             await _close_segment(state, ended_at=recorded_at, end_lat=lat, end_lng=lng, conn=conn)
             next_type = "transport_loaded" if prev == "loading" else "transport_empty"

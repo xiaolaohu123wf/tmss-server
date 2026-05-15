@@ -106,7 +106,7 @@ async def get_segment_stats(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """运输里程（按5种状态分组，直线×1.2修正）+ 每日运输趟次（可指定日期范围）"""
+    """运输里程（按5种状态分组，直线×1.2修正）+ 每日运输往返趟次（可指定日期范围）"""
     fid = _fleet_id(session)
     since, until = _parse_range(from_date, to_date)
 
@@ -145,13 +145,21 @@ async def get_segment_stats(
         daily_rows = await conn.fetch(
             """
             SELECT
-              DATE(ts.started_at AT TIME ZONE 'Asia/Shanghai') AS day,
-              COUNT(*) AS cnt
-            FROM track_segment ts
-            WHERE ts.started_at >= $1 AND ts.started_at < $2
-              AND ts.ended_at IS NOT NULL
-              AND ts.segment_type IN ('transport_loaded', 'transport_empty')
-            GROUP BY day ORDER BY day
+              t.day,
+              SUM(LEAST(t.loaded_cnt, t.empty_cnt)) AS cnt
+            FROM (
+              SELECT
+                DATE(ts.started_at AT TIME ZONE 'Asia/Shanghai') AS day,
+                ts.vehicle_id,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_loaded') AS loaded_cnt,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_empty') AS empty_cnt
+              FROM track_segment ts
+              WHERE ts.started_at >= $1 AND ts.started_at < $2
+                AND ts.ended_at IS NOT NULL
+                AND ts.segment_type IN ('transport_loaded', 'transport_empty')
+              GROUP BY day, ts.vehicle_id
+            ) t
+            GROUP BY t.day ORDER BY t.day
             """,
             since, until,
         )
@@ -171,15 +179,23 @@ async def get_segment_stats(
         daily_rows = await conn.fetch(
             """
             SELECT
-              DATE(ts.started_at AT TIME ZONE 'Asia/Shanghai') AS day,
-              COUNT(*) AS cnt
-            FROM track_segment ts
-            JOIN vehicle v ON v.id = ts.vehicle_id
-              AND v.deleted_at IS NULL AND v.fleet_id = $3
-            WHERE ts.started_at >= $1 AND ts.started_at < $2
-              AND ts.ended_at IS NOT NULL
-              AND ts.segment_type IN ('transport_loaded', 'transport_empty')
-            GROUP BY day ORDER BY day
+              t.day,
+              SUM(LEAST(t.loaded_cnt, t.empty_cnt)) AS cnt
+            FROM (
+              SELECT
+                DATE(ts.started_at AT TIME ZONE 'Asia/Shanghai') AS day,
+                ts.vehicle_id,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_loaded') AS loaded_cnt,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_empty') AS empty_cnt
+              FROM track_segment ts
+              JOIN vehicle v ON v.id = ts.vehicle_id
+                AND v.deleted_at IS NULL AND v.fleet_id = $3
+              WHERE ts.started_at >= $1 AND ts.started_at < $2
+                AND ts.ended_at IS NOT NULL
+                AND ts.segment_type IN ('transport_loaded', 'transport_empty')
+              GROUP BY day, ts.vehicle_id
+            ) t
+            GROUP BY t.day ORDER BY t.day
             """,
             since, until, fid,
         )
@@ -304,7 +320,7 @@ async def get_efficiency(
     session: SessionData = Depends(require_fleet_or_above),
     conn: asyncpg.Connection = Depends(get_db_conn),  # type: ignore[type-arg]
 ) -> dict:
-    """效率分析：开动率 / 载重占比 / 平均单趟时长（可指定日期范围）"""
+    """效率分析：开动率 / 载重占比 / 平均单趟时长 / 往返趟次（可指定日期范围）"""
     fid = _fleet_id(session)
     since, until = _parse_range(from_date, to_date)
     days_count = max((until - since).days, 1)
@@ -339,6 +355,23 @@ async def get_efficiency(
         )
         vehicle_count = await conn.fetchval(
             "SELECT COUNT(*) FROM vehicle WHERE deleted_at IS NULL"
+        )
+        round_trip_total = await conn.fetchval(
+            """
+            SELECT COALESCE(SUM(LEAST(t.loaded_cnt, t.empty_cnt)), 0)
+            FROM (
+              SELECT
+                ts.vehicle_id,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_loaded') AS loaded_cnt,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_empty') AS empty_cnt
+              FROM track_segment ts
+              WHERE ts.started_at >= $1 AND ts.started_at < $2
+                AND ts.ended_at IS NOT NULL
+                AND ts.segment_type IN ('transport_loaded','transport_empty')
+              GROUP BY ts.vehicle_id
+            ) t
+            """,
+            since, until,
         )
     else:
         rows = await conn.fetch(
@@ -376,6 +409,25 @@ async def get_efficiency(
             "SELECT COUNT(*) FROM vehicle WHERE deleted_at IS NULL AND fleet_id = $1",
             fid,
         )
+        round_trip_total = await conn.fetchval(
+            """
+            SELECT COALESCE(SUM(LEAST(t.loaded_cnt, t.empty_cnt)), 0)
+            FROM (
+              SELECT
+                ts.vehicle_id,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_loaded') AS loaded_cnt,
+                COUNT(*) FILTER (WHERE ts.segment_type = 'transport_empty') AS empty_cnt
+              FROM track_segment ts
+              JOIN vehicle v ON v.id = ts.vehicle_id
+                AND v.deleted_at IS NULL AND v.fleet_id = $3
+              WHERE ts.started_at >= $1 AND ts.started_at < $2
+                AND ts.ended_at IS NOT NULL
+                AND ts.segment_type IN ('transport_loaded','transport_empty')
+              GROUP BY ts.vehicle_id
+            ) t
+            """,
+            since, until, fid,
+        )
 
     stats: dict[str, dict] = {}
     for r in rows:
@@ -386,8 +438,8 @@ async def get_efficiency(
 
     loaded = stats.get("transport_loaded", {}).get("count", 0)
     empty = stats.get("transport_empty", {}).get("count", 0)
-    transport_total = loaded + empty
-    loaded_ratio = round(loaded / transport_total * 100, 1) if transport_total > 0 else 0.0
+    loaded_segment_total = loaded + empty
+    loaded_ratio = round(loaded / loaded_segment_total * 100, 1) if loaded_segment_total > 0 else 0.0
 
     transport_avgs = [
         stats[t]["avg_min"]
@@ -404,6 +456,6 @@ async def get_efficiency(
         "loaded_ratio": loaded_ratio,
         "avg_transport_min": avg_transport_min,
         "total_trips": sum(v["count"] for v in stats.values()),
-        "transport_trips": transport_total,
+        "transport_trips": int(round_trip_total or 0),
         "type_stats": stats,
     })

@@ -11,7 +11,7 @@ let chart: unknown = null
 
 const METRICS = [
   { key: 'utilization_rate', label: '车辆开动率', unit: '%', color: '#34d399', max: 100 },
-  { key: 'loaded_ratio',     label: '载重趟次占比', unit: '%', color: '#38bdf8', max: 100 },
+  { key: 'loaded_ratio',     label: '载重段占比', unit: '%', color: '#38bdf8', max: 100 },
 ] as const
 
 function buildOption(data: EfficiencyStats) {
@@ -22,10 +22,11 @@ function buildOption(data: EfficiencyStats) {
       borderColor: 'rgba(0,180,255,.3)',
       textStyle: { color: '#e0f0ff', fontSize: 11 },
     },
-    grid: { left: 90, right: 40, top: 10, bottom: 10 },
+    grid: { left: 92, right: 46, top: 14, bottom: 20, containLabel: true },
     xAxis: {
       type: 'value', max: 100,
       axisLabel: { color: 'rgba(150,200,240,.5)', fontSize: 9, formatter: '{value}%' },
+      axisLine: { lineStyle: { color: 'rgba(0,180,255,.2)' } },
       splitLine: { lineStyle: { color: 'rgba(0,100,200,.15)' } },
     },
     yAxis: {
@@ -93,7 +94,7 @@ onUnmounted(() => {
         </div>
         <div class="metric-card">
           <span class="mc-val">{{ data.transport_trips }}</span>
-          <span class="mc-label">运输总趟次</span>
+          <span class="mc-label">运输往返总趟次</span>
         </div>
       </div>
     </div>

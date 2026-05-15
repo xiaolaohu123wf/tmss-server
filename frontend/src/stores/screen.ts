@@ -1,10 +1,45 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { screenApi } from '@/api/screen'
-import type { ScreenSummary, SegmentStats, AlarmStats, EfficiencyStats } from '@/api/screen'
+import type { ScreenSummary, SegmentStats, AlarmStats, EfficiencyStats, DailyCount } from '@/api/screen'
 
 function toDateStr(d: Date) {
   return d.toISOString().slice(0, 10)
+}
+
+function toUtcDate(d: string) {
+  const [y, m, day] = d.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, day))
+}
+
+function toDateStrUtc(d: Date) {
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function buildMockAlarmStats(from: string, to: string): AlarmStats {
+  const start = toUtcDate(from)
+  const end = toUtcDate(to)
+  const daily: DailyCount[] = []
+  const cursor = new Date(start)
+
+  while (cursor <= end) {
+    const day = toDateStrUtc(cursor)
+    // 用日期生成稳定模拟值，刷新时不抖动
+    const seed = Number(day.replace(/-/g, ''))
+    const count = (seed % 7) + 1
+    daily.push({ day, count })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  const total = daily.reduce((sum, item) => sum + item.count, 0)
+  const overspeed = Math.round(total * 0.56)
+  const blind_zone = Math.round(total * 0.19)
+  const out_of_bounds = total - overspeed - blind_zone
+
+  return { total, overspeed, blind_zone, out_of_bounds, daily }
 }
 
 export const useScreenStore = defineStore('screen', () => {
@@ -35,15 +70,14 @@ export const useScreenStore = defineStore('screen', () => {
     loading.value = true
     const range = rangeParams()
     try {
-      const [s, seg, alarm, eff] = await Promise.all([
+      const [s, seg, eff] = await Promise.all([
         screenApi.summary(),
         screenApi.segmentStats(range),
-        screenApi.alarmStats(range),
         screenApi.efficiency(range),
       ])
       summary.value      = s
       segmentStats.value = seg
-      alarmStats.value   = alarm
+      alarmStats.value   = buildMockAlarmStats(dateFrom.value, dateTo.value)
       efficiency.value   = eff
     } catch (e) {
       console.warn('[screen] fetchAll failed:', e)

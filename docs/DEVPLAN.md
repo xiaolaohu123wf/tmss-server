@@ -75,7 +75,8 @@
 ### 验收标准
 
 ```bash
-docker compose up -d
+# 仅启动依赖（与本机 python -m app.main 联调时勿默认启动 compose 中的 app）
+docker compose up -d redis
 alembic upgrade head          # 无报错，所有表已创建 ✅
 python -c "from app.config import settings; print(settings.tcp_port)"
 ```

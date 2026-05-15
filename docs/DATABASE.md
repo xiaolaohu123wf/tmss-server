@@ -545,7 +545,8 @@ CREATE TRIGGER trg_app_user_updated_at
 
 ### 15. `sys_config` — 系统/部署参数
 
-> 键值对形式，仅运维修改，不与业务配置混用。字段名由 `key` 改为 `config_key`，避免与 SQL 保留字歧义。
+> 键值对形式，仅运维修改，不与业务配置混用。字段名由 `key` 改为 `config_key`，避免与 SQL 保留字歧义。  
+> **端口说明**：应用**实际**监听端口由 `HTTP_PORT` / `TCP_PORT`（`app/config.py`）决定，默认 **8900** / **8901**。`sys_config` 中的 `tcp_port` / `http_port` 仅为历史示例数据；`V001` 迁移里种子值曾写为 9000/8080，**与运行时不一定一致**，以后续文档与配置为准。
 
 ```sql
 CREATE TABLE sys_config (
@@ -555,10 +556,10 @@ CREATE TABLE sys_config (
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- 初始化示例参数
+-- 初始化示例参数（若需与代码默认值一致，可手工改为 8901 / 8900）
 INSERT INTO sys_config (config_key, value, description) VALUES
-  ('tcp_port',          '9000',  'TCP 监听端口'),
-  ('http_port',         '8080',  'HTTP 管理界面端口'),
+  ('tcp_port',          '8901',  'TCP 监听端口（展示用；实际以环境变量为准）'),
+  ('http_port',         '8900',  'HTTP 管理界面端口（展示用；实际以环境变量为准）'),
   ('gps_filter_enable', '1',     'GPS卡尔曼滤波开关 1=启用 0=关闭'),
   ('gps_filter_alpha',  '0.2',   'GPS卡尔曼滤波系数 α，范围 0~1');
 

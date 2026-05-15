@@ -109,9 +109,10 @@ async def vehicle_stream(
 
 | 环境 | 命令 |
 | --- | --- |
-| 开发 | `uvicorn app.main:app --reload --port 8900` |
-| 生产（单进程） | `uvicorn app.main:app --workers 1 --loop uvloop` |
-| 生产（多进程） | `gunicorn -k uvicorn.workers.UvicornWorker -w 2 app.main:app` |
+| 开发（推荐） | `python -m app.main` — TCP 与 HTTP 在同一 asyncio 循环内启动（见 `app/main.py`） |
+| 开发（仅 HTTP、无 TCP） | `uvicorn app.http.app:create_app --factory --host 0.0.0.0 --port 8900`，设备接入不可用 |
+| 生产（单进程） | 同开发入口；或 `gunicorn` + 自定义 worker（需自行保证 TCP 与 HTTP 同进程或迁移状态至 Redis） |
+| 生产（多进程） | `gunicorn -k uvicorn.workers.UvicornWorker -w 2 app.http.app:create_app` 仅覆盖 HTTP；**多进程下 TCP 长连接状态不共享**，须先架构调整 |
 
 > 注意：TCP 长连接服务（设备状态、300 点缓冲区）存在进程内存中，**多进程模式下状态不共享**；若要多进程，设备状态须迁移至 Redis。开发阶段单进程足够，上线后视负载再决定。
 
@@ -278,7 +279,7 @@ async def try_fire_alert(redis: Redis, device_id: int, alert_type: str, cooldown
 # pyproject.toml
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -407,91 +408,41 @@ watch(data, (raw) => {
 
 ### 7.1 Docker Compose
 
-```yaml
-# docker-compose.yml
-services:
-  app:
-    build: .
-    ports:
-      - "8901:8901"   # TCP 设备接入
-      - "8900:8900"   # HTTP API
-    environment:
-      - DATABASE_URL=postgresql://tmss:tmss@postgres:5432/tmss_db
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    restart: unless-stopped
+以仓库根目录 `docker-compose.yml` 为唯一权威；要点如下（若与下文不一致，**以 YAML 为准**）：
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: tmss_db
-      POSTGRES_USER: tmss
-      POSTGRES_PASSWORD: tmss
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./alembic/sql:/docker-entrypoint-initdb.d  # 首次建库自动执行
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tmss"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+| 服务 | 说明 |
+| --- | --- |
+| **redis** | 镜像 `redis:7-alpine`，暴露 **6379**；与本机 `python -m app.main` 联调时用 `docker compose up -d redis` **仅**启动 Redis |
+| **postgres** | `profiles: [local-db]`，**默认不启动**；启动后宿主机端口 **`5433` → 容器内 5432**（避免与本机已有 PostgreSQL 冲突） |
+| **app** | 构建本仓库 `Dockerfile`，映射 `8900`/`8901`；与**本机** `python -m app.main` **不可同时绑定相同端口** |
+| **nginx** | `profiles: [production]`，挂载 `./nginx.conf` 与 `frontend/dist`，暴露 **80** |
 
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes  # AOF 持久化
+`app` 服务通过 `.env`（`env_file`）注入 `DATABASE_URL`、`REDIS_URL` 等；连接 Compose 内 PostgreSQL 时主机名为 `postgres`、端口 **5432**（容器网络内）。
 
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./frontend/dist:/usr/share/nginx/html  # Vue 打包产物
-    depends_on:
-      - app
+```bash
+# 本机虚拟环境跑后端：只起依赖
+docker compose up -d redis
+docker compose --profile local-db up -d redis postgres
 
-volumes:
-  postgres_data:
-  redis_data:
+# 全容器后端
+docker compose up -d
+
+# 生产：再开启 nginx
+docker compose --profile production up -d
 ```
 
-**Dockerfile（Python 多阶段构建）**：
-```dockerfile
-FROM python:3.11-slim AS base
-WORKDIR /app
-RUN pip install uv
-
-FROM base AS deps
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-
-FROM base AS runtime
-COPY --from=deps /app/.venv /app/.venv
-COPY app/ ./app/
-ENV PATH="/app/.venv/bin:$PATH"
-EXPOSE 8901 8900
-CMD ["python", "-m", "app.main"]
-```
-
-> 使用 `uv`（Rust 实现的 pip 替代品）代替 pip，依赖安装速度快 10–100x。
+**Dockerfile（摘要，以仓库文件为准）**：基于 `python:3.12-slim`，用 `uv` 或 `uv pip install` 安装依赖，`CMD ["python", "-m", "app.main"]`，`EXPOSE 8900 8901`。
 
 ---
 
 ## 八、完整依赖清单
 
 ```toml
-# pyproject.toml
+# pyproject.toml（节选；完整以仓库为准）
 [project]
 name = "tmss-server"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     # HTTP
     "fastapi>=0.111",
@@ -616,6 +567,7 @@ tmss-server/
 │   │       ├── router_admin.py       # 系统配置（需二次验证）+ 车队管理
 │   │       ├── router_fleets.py      # GET/PATCH /api/fleets/me
 │   │       ├── router_track_segments.py  # 轨迹段查询 + 管理员删除
+│   │       ├── router_screen.py          # 大屏相关查询等
 │   │       ├── router_tcp_messages.py    # TCP 调试消息环形缓冲
 │   │       └── router_stream.py      # SSE 实时推送
 │   │

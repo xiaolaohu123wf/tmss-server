@@ -16,5 +16,5 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
-EXPOSE 9000 8080
+EXPOSE 8900 8901
 CMD ["python", "-m", "app.main"]
