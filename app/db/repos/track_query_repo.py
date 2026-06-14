@@ -6,8 +6,13 @@ from typing import Optional
 
 import asyncpg
 
-# 段列表查询：lat/lng 来自 segment 表存储的起终坐标；
-# loc_type 通过 LATERAL 从 location_point 时间范围内取首/末点获得
+# 段列表查询。
+# 优化要点：
+#   1. 去掉了两个 LATERAL 子查询（原用于获取 start/end loc_type），
+#      改为直接从 track_segment 读取起终坐标，loc_type 固定为 'gps'（见路由层注释）。
+#      单次查询从 O(N×location_point 扫描) 降至 O(1) 纯索引扫描。
+#   2. 直接 SELECT distance_km 存储列；NULL 仅出现在开放段或 V011 前的历史段，
+#      路由层对空值集合再调 _DISTANCE_KM_SQL 降级计算。
 _SEGMENT_LIST_SQL = """
     SELECT
         ts.id,
@@ -22,33 +27,10 @@ _SEGMENT_LIST_SQL = """
         ts.end_lng,
         ts.point_count,
         ts.segment_type,
-        lp_end.lat  AS last_lat,
-        lp_end.lng  AS last_lng,
-        COALESCE(lp_start.loc_type::text, 'gps') AS start_loc_type,
-        COALESCE(lp_end.loc_type::text,   'gps') AS end_loc_type
+        ts.distance_km
     FROM track_segment ts
     LEFT JOIN vehicle v
         ON v.id = ts.vehicle_id AND v.deleted_at IS NULL
-    LEFT JOIN LATERAL (
-        SELECT loc_type
-        FROM location_point
-        WHERE device_id = ts.device_id
-          AND recorded_at >= ts.started_at
-          AND recorded_at <= COALESCE(ts.ended_at, NOW())
-          AND loc_type = 'gps'
-        ORDER BY recorded_at ASC, id ASC
-        LIMIT 1
-    ) lp_start ON TRUE
-    LEFT JOIN LATERAL (
-        SELECT lat, lng, loc_type
-        FROM location_point
-        WHERE device_id = ts.device_id
-          AND recorded_at >= ts.started_at
-          AND recorded_at <= COALESCE(ts.ended_at, NOW())
-          AND loc_type = 'gps'
-        ORDER BY recorded_at DESC, id DESC
-        LIMIT 1
-    ) lp_end ON TRUE
     WHERE ts.started_at >= $1
       AND ts.started_at < $2
       AND ($3::BIGINT IS NULL OR ts.vehicle_id = $3)
@@ -147,10 +129,8 @@ class TrackSegmentListRow:
     end_lng: Optional[float]
     point_count: int
     segment_type: Optional[str]
-    last_lat: Optional[float]
-    last_lng: Optional[float]
-    start_loc_type: str
-    end_loc_type: str
+    # V011+: 关闭时预计算写入，NULL 表示开放段或历史未填充段，路由层降级处理
+    distance_km: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -197,10 +177,7 @@ class TrackQueryRepo:
                     end_lng=float(r["end_lng"]) if r["end_lng"] is not None else None,
                     point_count=int(r["point_count"]),
                     segment_type=r["segment_type"],
-                    last_lat=float(r["last_lat"]) if r["last_lat"] is not None else None,
-                    last_lng=float(r["last_lng"]) if r["last_lng"] is not None else None,
-                    start_loc_type=str(r["start_loc_type"] or "gps"),
-                    end_loc_type=str(r["end_loc_type"] or "gps"),
+                    distance_km=float(r["distance_km"]) if r["distance_km"] is not None else None,
                 )
             )
         return out

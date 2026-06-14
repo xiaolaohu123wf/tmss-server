@@ -138,6 +138,34 @@ async def get_zones_at(
     return result
 
 
+async def get_enabled_zones(
+    conn: asyncpg.Connection,  # type: ignore[type-arg]
+) -> list[GeoZoneRow]:
+    """返回当前缓存的全量启用围栏列表（5 分钟刷新）。
+    供批量点位判定场景：调用方拿到列表后用 zone_name_at() 做纯内存判定，
+    避免在循环中重复触发异步 DB 查询（N+1 问题）。
+    """
+    return await _load_zones(conn)
+
+
+def zone_name_at(
+    zones: list[GeoZoneRow],
+    lat_wgs: Optional[float],
+    lng_wgs: Optional[float],
+) -> Optional[str]:
+    """同步版围栏命中查询：在已加载的 zones 列表上做纯内存点在多边形判定。
+    坐标为 WGS-84，内部先转 GCJ-02 再与围栏坐标对齐。
+    未命中或坐标为 None 时返回 None。
+    """
+    if lat_wgs is None or lng_wgs is None:
+        return None
+    lat_gcj, lng_gcj = wgs84_to_gcj02(lat_wgs, lng_wgs)
+    for z in zones:
+        if z.coordinates and point_in_polygon(lat_gcj, lng_gcj, z.coordinates):
+            return z.name
+    return None
+
+
 def get_zone_speed_limit(zones: list[GeoZoneRow], global_limit: int) -> tuple[int, Optional[int]]:
     """
     返回 (有效限速, 命中的 zone_id)。

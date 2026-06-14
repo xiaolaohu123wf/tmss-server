@@ -65,6 +65,12 @@ const router = createRouter({
       meta: { layout: 'main', title: '轨迹查询', noPadding: true },
     },
     {
+      path: '/history-tasks',
+      name: 'historyTasks',
+      component: () => import('@/views/HistoryTasksView.vue'),
+      meta: { layout: 'main', title: '历史任务查询' },
+    },
+    {
       path: '/users',
       name: 'users',
       component: () => import('@/views/UsersView.vue'),

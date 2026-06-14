@@ -8,6 +8,7 @@ import asyncpg
 
 from app.db.queries.track_segment import (
     CLOSE_SEGMENT_SQL,
+    COMPUTE_DISTANCE_SQL,
     INCREMENT_SEGMENT_POINTS_SQL,
     INSERT_SEGMENT_SQL,
     SELECT_OPEN_SEGMENT_BY_DEVICE_SQL,
@@ -58,6 +59,11 @@ class TrackSegmentRepo:
             CLOSE_SEGMENT_SQL,
             segment_id, ended_at, end_lat, end_lng, extra_points,
         )
+        # 段关闭后立即计算并持久化里程，消除列表查询对 location_point 的实时扫描。
+        # COMPUTE_DISTANCE_SQL 利用 idx_lp_device_time 做顺序范围扫描，
+        # 典型运输段（30–60 min ≈ 1800–3600 点）耗时约 5–20 ms，
+        # 而段切换频率极低（每次行程 4–6 次），对 GPS 热路径影响可忽略。
+        await conn.execute(COMPUTE_DISTANCE_SQL, segment_id)
 
     async def update_segment_type(
         self,

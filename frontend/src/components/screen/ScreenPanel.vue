@@ -1,6 +1,8 @@
 <!-- 大屏通用面板容器：深色玻璃 + 蓝色发光边框 -->
 <script setup lang="ts">
+import { useSlots } from 'vue'
 defineProps<{ title: string }>()
+const slots = useSlots()
 </script>
 
 <template>
@@ -8,8 +10,14 @@ defineProps<{ title: string }>()
     <div class="s-panel-header">
       <span class="s-panel-corner tl" />
       <span class="s-panel-corner tr" />
-      <span class="s-panel-title">{{ title }}</span>
-      <slot name="header-extra" />
+      <!-- 标题始终横排，单独占满一行 -->
+      <div class="s-panel-title-row">
+        <span class="s-panel-title">{{ title }}</span>
+      </div>
+      <!-- 日期选择器等额外内容另起一行右对齐（有内容时才渲染） -->
+      <div v-if="slots['header-extra']" class="s-panel-extra">
+        <slot name="header-extra" />
+      </div>
     </div>
     <div class="s-panel-body">
       <slot />
@@ -32,11 +40,13 @@ defineProps<{ title: string }>()
 
 .s-panel-header {
   position: relative;
-  padding: 8px 12px 6px;
+  padding: 9px 12px 7px;
   border-bottom: 1px solid rgba(0, 180, 255, 0.15);
   background: linear-gradient(90deg, rgba(0, 100, 200, 0.25) 0%, transparent 60%);
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .s-panel-corner {
@@ -48,13 +58,25 @@ defineProps<{ title: string }>()
 .s-panel-corner.tl { top: 0; left: 0; border-width: 2px 0 0 2px; }
 .s-panel-corner.tr { top: 0; right: 0; border-width: 2px 2px 0 0; }
 
+.s-panel-title-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
 .s-panel-title {
   font-size: 12px;
   font-weight: 600;
   color: #7dd3fc;
   letter-spacing: 1px;
-  text-transform: uppercase;
-  flex: 1;
+  white-space: nowrap;
+}
+
+/* 额外内容（日期选择器）右对齐 */
+.s-panel-extra {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .s-panel-body {

@@ -64,6 +64,7 @@ nginx.conf               # 生产环境 nginx（仓库根目录；compose --prof
 | [DATABASE](docs/DATABASE.md) | 数据库表结构与索引策略 |
 | [TECHSTACK](docs/TECHSTACK.md) | 技术选型与依赖清单 |
 | [FRONTEND](docs/FRONTEND.md) | 前端设计、目录结构、路由与部署说明 |
+| [ARCHIVE](docs/ARCHIVE.md) | 数据归档规范（冷热分级、导出格式、清理策略） |
 | [FEATURE_FLEET_CAPTAIN_V2](docs/FEATURE_FLEET_CAPTAIN_V2.md) | 车队长权限 V2 功能规格（待确认） |
 
 ## 当前进度

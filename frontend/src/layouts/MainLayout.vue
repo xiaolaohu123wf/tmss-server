@@ -53,6 +53,7 @@ const allMenuItems = computed(() => {
     { name: 'geoZones',   path: '/geo-zones',  icon: 'MapLocation',    label: '围栏管理' },
     { name: 'events',     path: '/events',     icon: 'Bell',           label: '事件查询' },
     { name: 'tracks',     path: '/tracks',     icon: 'Guide',          label: '轨迹查询' },
+    { name: 'historyTasks', path: '/history-tasks', icon: 'DataAnalysis', label: '历史任务查询' },
   ]
   if (auth.isManager) {
     items.push(
