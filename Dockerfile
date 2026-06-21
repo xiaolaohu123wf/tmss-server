@@ -1,4 +1,5 @@
-FROM python:3.12-slim AS base
+ARG PYTHON_IMAGE=python:3.12-slim
+FROM ${PYTHON_IMAGE} AS base
 WORKDIR /app
 RUN pip install uv
 
@@ -6,7 +7,7 @@ FROM base AS deps
 COPY pyproject.toml ./
 RUN uv sync --frozen --no-dev 2>/dev/null || uv pip install --system \
     fastapi uvicorn[standard] gunicorn \
-    asyncpg alembic \
+    asyncpg alembic psycopg2-binary \
     "pydantic[email]" pydantic-settings \
     "redis[asyncio]" httpx structlog bcrypt
 

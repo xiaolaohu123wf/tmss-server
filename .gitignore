@@ -63,10 +63,10 @@ static/map/**/*.tif
 static/map/**/*.tiff
 static/map/**/*.vrt
 static/map/**/*.mbtiles
-
-# GCJ warp + XYZ tiles (generated locally)
-static/map/tiles_dom/
 static/map/result_warp_gcj3857.tif
 static/map/*.precursor.vrt
-static/map/orthophoto_amap_meta.json
+
+# WGS84 瓦片（已弃用，大屏使用 GCJ/amap 版）
+static/map/tiles_dom_wgs/
+static/map/orthophoto_wgs_meta.json
 

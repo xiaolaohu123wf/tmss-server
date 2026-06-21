@@ -1,0 +1,20 @@
+{
+  "tileUrlSuffix": "/static/map/tiles_dom",
+  "tileFormat": "png",
+  "zoom": "14-19",
+  "center_gcj_lnglat": [
+    109.26699426606075,
+    30.385212464855442
+  ],
+  "bounds_gcj_lnglat": {
+    "southwest": [
+      109.2586750669203,
+      30.371294975858
+    ],
+    "northeast": [
+      109.27531346520118,
+      30.399129953852885
+    ]
+  },
+  "resolution_m_approx": 0.058362050171471176
+}
